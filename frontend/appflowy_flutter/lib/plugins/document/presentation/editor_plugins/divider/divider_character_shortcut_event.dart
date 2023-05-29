@@ -51,7 +51,8 @@ CharacterShortcutEventHandler _convertMinusesToDividerHandler =
 };
 
 bool _hasTwoConsecutiveDashes(String text, int end) {
-  if (text.length < dividerShortcutToken.length || end > text.length) {
+  if (text.length < dividerShortcutToken.length || end > text.length
+      || end < dividerShortcutToken.length) {
     return false;
   }
   return text[end - 1] == '-' && text[end - dividerShortcutToken.length] == '-';
