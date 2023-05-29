@@ -27,7 +27,7 @@ CharacterShortcutEventHandler _convertMinusesToDividerHandler =
   if (node == null || delta == null) {
     return false;
   }
-  if (!_hasTwoConsecutiveDashes(node.delta!.toPlainText(), selection.start.offset)) {
+  if (!_hasTwoConsecutiveDashes(delta.toPlainText(), selection.start.offset)) {
     return false;
   }
   final dashStartPosition = selection.start.offset - 2;
