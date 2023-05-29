@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 ///   - web
 ///   - mobile
 ///
+const dividerShortcutToken = '--';
+
 final CharacterShortcutEvent convertMinusesToDivider = CharacterShortcutEvent(
   key: 'insert a divider',
   character: '-',
@@ -30,12 +32,12 @@ CharacterShortcutEventHandler _convertMinusesToDividerHandler =
   if (!_hasTwoConsecutiveDashes(delta.toPlainText(), selection.start.offset)) {
     return false;
   }
-  final dashStartPosition = selection.start.offset - 2;
+  final dashStartPosition = selection.start.offset - dividerShortcutToken.length;
   Transaction transaction;
 
-  if (node.delta!.length > 2) {
+  if (node.delta!.length > dividerShortcutToken.length) {
     transaction = editorState.transaction
-      ..deleteText(node, dashStartPosition, 2)
+      ..deleteText(node, dashStartPosition, dividerShortcutToken.length)
       ..insertNode(selection.end.path.next, dividerNode());
   } else {
     transaction = editorState.transaction
@@ -49,10 +51,10 @@ CharacterShortcutEventHandler _convertMinusesToDividerHandler =
 };
 
 bool _hasTwoConsecutiveDashes(String text, int end) {
-  if (text.length < 2 || end > text.length) {
+  if (text.length < dividerShortcutToken.length || end > text.length) {
     return false;
   }
-  return text[end - 1] == '-' && text[end - 2] == '-';
+  return text[end - 1] == '-' && text[end - dividerShortcutToken.length] == '-';
 }
 
 SelectionMenuItem dividerMenuItem = SelectionMenuItem(
