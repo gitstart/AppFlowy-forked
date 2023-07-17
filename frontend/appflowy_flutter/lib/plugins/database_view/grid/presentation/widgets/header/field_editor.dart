@@ -16,17 +16,17 @@ import 'field_type_option_editor.dart';
 
 class FieldEditor extends StatefulWidget {
   final String viewId;
-  final String fieldName;
-  final bool isGroupField;
+  final bool isGroupingField;
   final Function(String)? onDeleted;
-  final IFieldTypeOptionLoader typeOptionLoader;
+  final Function(String)? onHidden;
+  final FieldTypeOptionLoader typeOptionLoader;
 
   const FieldEditor({
     required this.viewId,
-    this.fieldName = "",
     required this.typeOptionLoader,
-    this.isGroupField = false,
+    this.isGroupingField = false,
     this.onDeleted,
+    this.onHidden,
     Key? key,
   }) : super(key: key);
 
@@ -51,23 +51,27 @@ class _FieldEditorState extends State<FieldEditor> {
 
   @override
   Widget build(BuildContext context) {
-    List<Widget> children = [
+    final List<Widget> children = [
       _FieldNameTextField(popoverMutex: popoverMutex),
-      const VSpace(10),
       if (widget.onDeleted != null) _addDeleteFieldButton(),
-      _FieldTypeOptionCell(popoverMutex: popoverMutex),
+      if (widget.onHidden != null) _addHideFieldButton(),
+      if (!widget.typeOptionLoader.field.isPrimary)
+        _FieldTypeOptionCell(popoverMutex: popoverMutex),
     ];
     return BlocProvider(
-      create: (context) => FieldEditorBloc(
-        viewId: widget.viewId,
-        fieldName: widget.fieldName,
-        isGroupField: widget.isGroupField,
-        loader: widget.typeOptionLoader,
-      )..add(const FieldEditorEvent.initial()),
-      child: ListView.builder(
+      create: (context) {
+        return FieldEditorBloc(
+          isGroupField: widget.isGroupingField,
+          loader: widget.typeOptionLoader,
+          field: widget.typeOptionLoader.field,
+        )..add(const FieldEditorEvent.initial());
+      },
+      child: ListView.separated(
         shrinkWrap: true,
         itemCount: children.length,
         itemBuilder: (context, index) => children[index],
+        separatorBuilder: (context, index) =>
+            VSpace(GridSize.typeOptionSeparatorHeight),
         padding: const EdgeInsets.symmetric(vertical: 12.0),
       ),
     );
@@ -84,6 +88,25 @@ class _FieldEditorState extends State<FieldEditor> {
               state.field.fold(
                 () => Log.error('Can not delete the field'),
                 (field) => widget.onDeleted?.call(field.id),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _addHideFieldButton() {
+    return BlocBuilder<FieldEditorBloc, FieldEditorState>(
+      builder: (context, state) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12.0),
+          child: _HideFieldButton(
+            popoverMutex: popoverMutex,
+            onHidden: () {
+              state.field.fold(
+                () => Log.error('Can not hidden the field'),
+                (field) => widget.onHidden?.call(field.id),
               );
             },
           ),
@@ -134,6 +157,7 @@ class _FieldNameTextField extends StatefulWidget {
 }
 
 class _FieldNameTextFieldState extends State<_FieldNameTextField> {
+  final textController = TextEditingController();
   FocusNode focusNode = FocusNode();
 
   @override
@@ -158,6 +182,7 @@ class _FieldNameTextFieldState extends State<_FieldNameTextField> {
     return BlocListener<FieldEditorBloc, FieldEditorState>(
       listenWhen: (p, c) => p.field == none(),
       listener: (context, state) {
+        textController.text = state.name;
         focusNode.requestFocus();
       },
       child: BlocBuilder<FieldEditorBloc, FieldEditorState>(
@@ -168,11 +193,10 @@ class _FieldNameTextFieldState extends State<_FieldNameTextField> {
             padding: const EdgeInsets.symmetric(horizontal: 12.0),
             child: FlowyTextField(
               focusNode: focusNode,
+              controller: textController,
               onSubmitted: (String _) => PopoverContainer.of(context).close(),
-              text: context.read<FieldEditorBloc>().state.name,
-              errorText: context.read<FieldEditorBloc>().state.errorText.isEmpty
-                  ? null
-                  : context.read<FieldEditorBloc>().state.errorText,
+              text: state.name,
+              errorText: state.errorText.isEmpty ? null : state.errorText,
               onChanged: (newName) {
                 context
                     .read<FieldEditorBloc>()
@@ -202,7 +226,7 @@ class _DeleteFieldButton extends StatelessWidget {
       buildWhen: (previous, current) => previous != current,
       builder: (context, state) {
         final enable = !state.canDelete && !state.isGroupField;
-        Widget button = FlowyButton(
+        final Widget button = FlowyButton(
           disable: !enable,
           text: FlowyText.medium(
             LocaleKeys.grid_field_delete.tr(),
@@ -211,6 +235,37 @@ class _DeleteFieldButton extends StatelessWidget {
           onTap: () {
             if (enable) onDeleted?.call();
           },
+          onHover: (_) => popoverMutex.close(),
+        );
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 4.0),
+          child: SizedBox(height: GridSize.popoverItemHeight, child: button),
+        );
+      },
+    );
+  }
+}
+
+class _HideFieldButton extends StatelessWidget {
+  final PopoverMutex popoverMutex;
+  final VoidCallback? onHidden;
+
+  const _HideFieldButton({
+    required this.popoverMutex,
+    required this.onHidden,
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<FieldEditorBloc, FieldEditorState>(
+      buildWhen: (previous, current) => previous != current,
+      builder: (context, state) {
+        final Widget button = FlowyButton(
+          text: FlowyText.medium(
+            LocaleKeys.grid_field_hide.tr(),
+          ),
+          onTap: () => onHidden?.call(),
           onHover: (_) => popoverMutex.close(),
         );
         return Padding(

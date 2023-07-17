@@ -1,5 +1,6 @@
 use flowy_derive::ProtoBuf_Enum;
 use flowy_notification::NotificationBuilder;
+
 const OBSERVABLE_CATEGORY: &str = "Grid";
 
 #[derive(ProtoBuf_Enum, Debug)]
@@ -16,7 +17,7 @@ pub enum DatabaseNotification {
   /// Trigger after editing a field properties including rename,update type option, etc
   DidUpdateField = 50,
   /// Trigger after the number of groups is changed
-  DidUpdateGroups = 60,
+  DidUpdateNumOfGroups = 60,
   /// Trigger after inserting/deleting/updating/moving a row
   DidUpdateGroupRow = 61,
   /// Trigger when setting a new grouping field
@@ -35,6 +36,12 @@ pub enum DatabaseNotification {
   DidUpdateLayoutSettings = 80,
   // Trigger when the layout field of the database is changed
   DidSetNewLayoutField = 81,
+  // Trigger when the layout of the database is changed
+  DidUpdateDatabaseLayout = 82,
+  // Trigger when the database view is deleted
+  DidDeleteDatabaseView = 83,
+  // Trigger when the database view is moved to trash
+  DidMoveDatabaseViewToTrash = 84,
 }
 
 impl std::default::Default for DatabaseNotification {

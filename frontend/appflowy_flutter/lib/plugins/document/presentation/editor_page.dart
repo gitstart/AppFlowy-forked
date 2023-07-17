@@ -6,7 +6,6 @@ import 'package:appflowy/plugins/document/presentation/editor_style.dart';
 import 'package:appflowy_editor/appflowy_editor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:tuple/tuple.dart';
 
 /// Wrapper for the appflowy editor.
 class AppFlowyEditorPage extends StatefulWidget {
@@ -25,16 +24,6 @@ class AppFlowyEditorPage extends StatefulWidget {
 
 class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
   final scrollController = ScrollController();
-  final slashMenuItems = [
-    boardMenuItem,
-    gridMenuItem,
-    calloutItem,
-    dividerMenuItem,
-    mathEquationItem,
-    codeBlockItem,
-    emojiMenuItem,
-    autoGeneratorMenuItem,
-  ];
 
   final List<CommandShortcutEvent> commandShortcutEvents = [
     ...codeBlockCommands,
@@ -54,42 +43,62 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
     highlightColorItem,
   ];
 
+  late final slashMenuItems = [
+    inlineGridMenuItem(documentBloc),
+    referenceGridMenuItem,
+    inlineBoardMenuItem(documentBloc),
+    boardMenuItem,
+    calloutItem,
+    mathEquationItem,
+    codeBlockItem,
+    emojiMenuItem,
+    autoGeneratorMenuItem,
+  ];
+
   late final Map<String, BlockComponentBuilder> blockComponentBuilders =
       _customAppFlowyBlockComponentBuilders();
-  late final List<CharacterShortcutEvent> characterShortcutEvents = [
-    // divider
-    convertMinusesToDivider,
+  List<CharacterShortcutEvent> get characterShortcutEvents => [
+        // code block
+        ...codeBlockCharacterEvents,
 
-    // code block
-    ...codeBlockCharacterEvents,
+        // toggle list
+        // formatGreaterToToggleList,
 
-    ...standardCharacterShortcutEvents
-      ..removeWhere(
-        (element) => element == slashCommand,
-      ), // remove the default slash command.
-    customSlashCommand(slashMenuItems),
+        // customize the slash menu command
+        customSlashCommand(
+          slashMenuItems,
+          style: styleCustomizer.selectionMenuStyleBuilder(),
+        ),
 
-    // formatGreaterToToggleList,
-  ];
+        ...standardCharacterShortcutEvents
+          ..removeWhere(
+            (element) => element == slashCommand,
+          ), // remove the default slash command.
+      ];
 
   late final showSlashMenu = customSlashCommand(
     slashMenuItems,
     shouldInsertSlash: false,
+    style: styleCustomizer.selectionMenuStyleBuilder(),
   ).handler;
 
-  late final styleCustomizer = EditorStyleCustomizer(context: context);
+  EditorStyleCustomizer get styleCustomizer => EditorStyleCustomizer(
+        context: context,
+      );
   DocumentBloc get documentBloc => context.read<DocumentBloc>();
 
   @override
   Widget build(BuildContext context) {
-    final autoFocusParameters = _computeAutoFocusParameters();
+    final (bool autoFocus, Selection? selection) =
+        _computeAutoFocusParameters();
+
     final editor = AppFlowyEditor.custom(
       editorState: widget.editorState,
       editable: true,
       scrollController: scrollController,
       // setup the auto focus parameters
-      autoFocus: autoFocusParameters.item1,
-      focusedSelection: autoFocusParameters.item2,
+      autoFocus: autoFocus,
+      focusedSelection: selection,
       // setup the theme
       editorStyle: styleCustomizer.style(),
       // customize the block builder
@@ -101,11 +110,13 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
     );
 
     return Center(
-      child: Container(
+      child: ConstrainedBox(
         constraints: const BoxConstraints(
           maxWidth: double.infinity,
+          maxHeight: double.infinity,
         ),
         child: FloatingToolbar(
+          style: styleCustomizer.floatingToolbarStyleBuilder(),
           items: toolbarItems,
           editorState: widget.editorState,
           scrollController: scrollController,
@@ -119,16 +130,16 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
     final standardActions = [
       OptionAction.delete,
       OptionAction.duplicate,
-      OptionAction.divider,
-      OptionAction.moveUp,
-      OptionAction.moveDown,
+      // OptionAction.divider,
+      // OptionAction.moveUp,
+      // OptionAction.moveDown,
     ];
 
     final configuration = BlockComponentConfiguration(
       padding: (_) => const EdgeInsets.symmetric(vertical: 4.0),
     );
     final customBlockComponentBuilderMap = {
-      'document': DocumentComponentBuilder(),
+      PageBlockKeys.type: PageBlockComponentBuilder(),
       ParagraphBlockKeys.type: TextBlockComponentBuilder(
         configuration: configuration,
       ),
@@ -160,7 +171,9 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
         ),
         textStyleBuilder: (level) => styleCustomizer.headingStyleBuilder(level),
       ),
-      ImageBlockKeys.type: ImageBlockComponentBuilder(),
+      ImageBlockKeys.type: ImageBlockComponentBuilder(
+        configuration: configuration,
+      ),
       BoardBlockKeys.type: BoardBlockComponentBuilder(
         configuration: configuration,
       ),
@@ -189,7 +202,7 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
       ),
       AutoCompletionBlockKeys.type: AutoCompletionBlockComponentBuilder(),
       SmartEditBlockKeys.type: SmartEditBlockComponentBuilder(),
-      // ToggleListBlockKeys.type: ToggleListBlockComponentBuilder(),
+      ToggleListBlockKeys.type: ToggleListBlockComponentBuilder(),
     };
 
     final builders = {
@@ -199,7 +212,7 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
 
     // customize the action builder. actually, we can customize them in their own builder. Put them here just for convenience.
     for (final entry in builders.entries) {
-      if (entry.key == 'document') {
+      if (entry.key == PageBlockKeys.type) {
         continue;
       }
       final builder = entry.value;
@@ -215,16 +228,27 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
         CalloutBlockKeys.type
       ];
 
+      final supportAlignBuilderType = [
+        ImageBlockKeys.type,
+      ];
+
       final colorAction = [
         OptionAction.divider,
         OptionAction.color,
       ];
 
+      final alignAction = [
+        OptionAction.divider,
+        OptionAction.align,
+      ];
+
       final List<OptionAction> actions = [
         ...standardActions,
         if (supportColorBuilderTypes.contains(entry.key)) ...colorAction,
+        if (supportAlignBuilderType.contains(entry.key)) ...alignAction,
       ];
 
+      builder.showActions = (_) => true;
       builder.actionBuilder = (context, state) => BlockActionList(
             blockComponentContext: context,
             blockComponentState: state,
@@ -239,17 +263,17 @@ class _AppFlowyEditorPageState extends State<AppFlowyEditorPage> {
     return builders;
   }
 
-  Tuple2<bool, Selection?> _computeAutoFocusParameters() {
+  (bool, Selection?) _computeAutoFocusParameters() {
     if (widget.editorState.document.isEmpty) {
-      return Tuple2(true, Selection.collapse([0], 0));
+      return (true, Selection.collapse([0], 0));
     }
     final nodes = widget.editorState.document.root.children
         .where((element) => element.delta != null);
     final isAllEmpty =
         nodes.isNotEmpty && nodes.every((element) => element.delta!.isEmpty);
     if (isAllEmpty) {
-      return Tuple2(true, Selection.collapse(nodes.first.path, 0));
+      return (true, Selection.collapse(nodes.first.path, 0));
     }
-    return const Tuple2(false, null);
+    return const (false, null);
   }
 }

@@ -3,28 +3,28 @@ use std::collections::HashMap;
 use flowy_derive::{ProtoBuf, ProtoBuf_Enum};
 
 #[derive(Default, ProtoBuf)]
-pub struct OpenDocumentPayloadPBV2 {
+pub struct OpenDocumentPayloadPB {
   #[pb(index = 1)]
   pub document_id: String,
-  // Support customize initial data
 }
 
 #[derive(Default, ProtoBuf)]
-pub struct CreateDocumentPayloadPBV2 {
+pub struct CreateDocumentPayloadPB {
   #[pb(index = 1)]
   pub document_id: String,
-  // Support customize initial data
+
+  #[pb(index = 2, one_of)]
+  pub initial_data: Option<DocumentDataPB>,
 }
 
 #[derive(Default, ProtoBuf)]
-pub struct CloseDocumentPayloadPBV2 {
+pub struct CloseDocumentPayloadPB {
   #[pb(index = 1)]
   pub document_id: String,
-  // Support customize initial data
 }
 
 #[derive(Default, ProtoBuf, Debug)]
-pub struct ApplyActionPayloadPBV2 {
+pub struct ApplyActionPayloadPB {
   #[pb(index = 1)]
   pub document_id: String,
 
@@ -33,14 +33,14 @@ pub struct ApplyActionPayloadPBV2 {
 }
 
 #[derive(Default, ProtoBuf)]
-pub struct GetDocumentDataPayloadPBV2 {
+pub struct GetDocumentDataPayloadPB {
   #[pb(index = 1)]
   pub document_id: String,
   // Support customize initial data
 }
 
-#[derive(Default, ProtoBuf)]
-pub struct DocumentDataPB2 {
+#[derive(Default, Debug, ProtoBuf)]
+pub struct DocumentDataPB {
   #[pb(index = 1)]
   pub page_id: String,
 
@@ -69,13 +69,13 @@ pub struct BlockPB {
   pub children_id: String,
 }
 
-#[derive(Default, ProtoBuf)]
+#[derive(Default, ProtoBuf, Debug)]
 pub struct MetaPB {
   #[pb(index = 1)]
   pub children_map: HashMap<String, ChildrenPB>,
 }
 
-#[derive(Default, ProtoBuf)]
+#[derive(Default, ProtoBuf, Debug)]
 pub struct ChildrenPB {
   #[pb(index = 1)]
   pub children: Vec<String>,
@@ -202,4 +202,37 @@ pub struct ExportDataPB {
 
   #[pb(index = 2)]
   pub export_type: ExportType,
+}
+#[derive(PartialEq, Eq, Debug, ProtoBuf_Enum, Clone)]
+pub enum ConvertType {
+  Json = 0,
+}
+
+impl Default for ConvertType {
+  fn default() -> Self {
+    ConvertType::Json
+  }
+}
+
+impl From<i32> for ConvertType {
+  fn from(val: i32) -> Self {
+    match val {
+      0 => ConvertType::Json,
+      _ => {
+        tracing::error!("Invalid export type: {}", val);
+        ConvertType::Json
+      },
+    }
+  }
+}
+
+/// for the json type
+/// the data is the json string
+#[derive(Default, ProtoBuf, Debug)]
+pub struct ConvertDataPayloadPB {
+  #[pb(index = 1)]
+  pub convert_type: ConvertType,
+
+  #[pb(index = 2)]
+  pub data: Vec<u8>,
 }

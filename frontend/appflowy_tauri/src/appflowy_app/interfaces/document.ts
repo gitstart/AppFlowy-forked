@@ -1,16 +1,30 @@
-import { Editor } from 'slate';
-import { RegionGrid } from '$app/utils/region_grid';
-import { ReactEditor } from "slate-react";
+import Delta, { Op } from 'quill-delta';
+import { BlockActionTypePB } from '@/services/backend';
+import { Sources } from 'quill';
+import React from 'react';
+
+export interface DocumentBlockJSON {
+  type: BlockType;
+  data: BlockData<any>;
+  children: DocumentBlockJSON[];
+}
+
+export interface RangeStatic {
+  id: string;
+  length: number;
+  index: number;
+}
 
 export enum BlockType {
   PageBlock = 'page',
   HeadingBlock = 'heading',
-  TextBlock = 'text',
+  TextBlock = 'paragraph',
   TodoListBlock = 'todo_list',
   BulletedListBlock = 'bulleted_list',
   NumberedListBlock = 'numbered_list',
   ToggleListBlock = 'toggle_list',
   CodeBlock = 'code',
+  EquationBlock = 'math_equation',
   EmbedBlock = 'embed',
   QuoteBlock = 'quote',
   CalloutBlock = 'callout',
@@ -49,7 +63,7 @@ export interface CalloutBlockData extends TextBlockData {
 }
 
 export interface TextBlockData {
-  delta: TextDelta[];
+  delta: Op[];
 }
 
 export interface DividerBlockData {}
@@ -85,37 +99,8 @@ export interface NestedBlock<Type = any> {
   parent: string | null;
   children: string;
 }
-export interface TextDelta {
-  insert: string;
-  attributes?: Record<string, string | boolean>;
-}
-
-export enum BlockActionType {
-  Insert = 0,
-  Update = 1,
-  Delete = 2,
-  Move = 3,
-}
-
-export interface DeltaItem {
-  action: 'inserted' | 'removed' | 'updated';
-  payload: {
-    id: string;
-    value?: NestedBlock | string[];
-  };
-}
 
 export type Node = NestedBlock;
-
-export interface SelectionPoint {
-  path: [number, number];
-  offset: number;
-}
-
-export interface TextSelection {
-  anchor: SelectionPoint;
-  focus: SelectionPoint;
-}
 
 export interface DocumentData {
   rootId: string;
@@ -130,17 +115,44 @@ export interface DocumentState {
   // map of block id to children block ids
   children: Record<string, string[]>;
 }
-
-export interface RangeSelectionState {
-  isDragging?: boolean,
-  anchor?: PointState,
-  focus?: PointState,
+export interface SlashCommandState {
+  isSlashCommand: boolean;
+  blockId?: string;
 }
 
+export interface RectSelectionState {
+  selection: string[];
+  isDragging: boolean;
+}
 
-export interface PointState {
-  id: string,
-  selection: TextSelection
+export interface RangeState {
+  anchor?: {
+    id: string;
+    point: {
+      x: number;
+      y: number;
+      index?: number;
+      length?: number;
+    };
+  };
+  focus?: {
+    id: string;
+    point: {
+      x: number;
+      y: number;
+    };
+  };
+  ranges: Partial<
+    Record<
+      string,
+      {
+        index: number;
+        length: number;
+      }
+    >
+  >;
+  isDragging: boolean;
+  caret?: RangeStatic;
 }
 
 export enum ChangeType {
@@ -160,4 +172,95 @@ export interface BlockPBValue {
   data: string;
 }
 
-export type TextBlockKeyEventHandlerParams = [React.KeyboardEvent<HTMLDivElement>, ReactEditor & Editor];
+export enum SplitRelationship {
+  NextSibling,
+  FirstChild,
+}
+export enum TextAction {
+  Turn = 'turn',
+  Bold = 'bold',
+  Italic = 'italic',
+  Underline = 'underline',
+  Strikethrough = 'strikethrough',
+  Code = 'code',
+  Equation = 'equation',
+}
+export interface TextActionMenuProps {
+  /**
+   * The custom items that will be covered in the default items
+   */
+  customItems?: TextAction[];
+  /**
+   * The items that will be excluded from the default items
+   */
+  excludeItems?: TextAction[];
+}
+
+export interface BlockConfig {
+  /**
+   * Whether the block can have children
+   */
+  canAddChild: boolean;
+  /**
+   * The regexps that will be used to match the markdown flag
+   */
+  markdownRegexps?: RegExp[];
+
+  /**
+   * The default data of the block
+   */
+  defaultData?: BlockData<any>;
+
+  /**
+   * The props that will be passed to the text split function
+   */
+  splitProps?: {
+    /**
+     * The relationship between the next line block and the current block
+     */
+    nextLineRelationShip: SplitRelationship;
+    /**
+     * The type of the next line block
+     */
+    nextLineBlockType: BlockType;
+  };
+
+  /**
+   * The props that will be passed to the text action menu
+   */
+  textActionMenuProps?: TextActionMenuProps;
+}
+
+export interface ControllerAction {
+  action: BlockActionTypePB;
+  payload: {
+    block: { id: string; parent_id: string; children_id: string; data: string; ty: BlockType };
+    parent_id: string;
+    prev_id: string;
+  };
+}
+
+export interface RangeStaticNoId {
+  index: number;
+  length: number;
+}
+
+export interface CodeEditorProps extends EditorProps {
+  language: string;
+}
+export interface EditorProps {
+  isCodeBlock?: boolean;
+  placeholder?: string;
+  value?: Delta;
+  selection?: RangeStaticNoId;
+  lastSelection?: RangeStaticNoId;
+  onSelectionChange?: (range: RangeStaticNoId | null, oldRange: RangeStaticNoId | null, source?: Sources) => void;
+  onChange?: (delta: Delta, oldDelta: Delta, source?: Sources) => void;
+  onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+}
+
+export interface BlockCopyData {
+  json: string;
+  text: string;
+  html: string;
+}

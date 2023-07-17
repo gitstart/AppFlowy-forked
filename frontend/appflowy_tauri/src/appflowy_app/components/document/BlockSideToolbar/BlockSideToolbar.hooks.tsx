@@ -1,16 +1,16 @@
-import { BlockType, HeadingBlockData, NestedBlock } from "@/appflowy_app/interfaces/document";
-import { useAppDispatch } from "@/appflowy_app/stores/store";
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { getBlockByIdThunk } from "$app_reducers/document/async-actions";
+import { BlockType, HeadingBlockData } from '@/appflowy_app/interfaces/document';
+import { useAppDispatch } from '@/appflowy_app/stores/store';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { PopoverOrigin } from '@mui/material/Popover/Popover';
+import { getBlock } from '$app/components/document/_shared/SubscribeNode.hooks';
 
 const headingBlockTopOffset: Record<number, number> = {
   1: 7,
-  2: 6,
-  3: 3,
+  2: 5,
+  3: 4,
 };
 export function useBlockSideToolbar({ container }: { container: HTMLDivElement }) {
   const [nodeId, setHoverNodeId] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const dispatch = useAppDispatch();
   const [style, setStyle] = useState<React.CSSProperties>({});
@@ -18,10 +18,8 @@ export function useBlockSideToolbar({ container }: { container: HTMLDivElement }
   useEffect(() => {
     const el = ref.current;
     if (!el || !nodeId) return;
-    void(async () => {
-      const{ payload: node } = await dispatch(getBlockByIdThunk(nodeId)) as {
-        payload: NestedBlock;
-      };
+    void (async () => {
+      const node = getBlock(nodeId);
       if (!node) {
         setStyle({
           opacity: '0',
@@ -29,7 +27,7 @@ export function useBlockSideToolbar({ container }: { container: HTMLDivElement }
         });
         return;
       } else {
-        let top = 1;
+        let top = 2;
 
         if (node.type === BlockType.HeadingBlock) {
           const nodeData = node.data as HeadingBlockData;
@@ -43,15 +41,7 @@ export function useBlockSideToolbar({ container }: { container: HTMLDivElement }
         });
       }
     })();
-
   }, [dispatch, nodeId]);
-
-  const handleToggleMenu = useCallback((isOpen: boolean) => {
-    setMenuOpen(isOpen);
-    if (!isOpen) {
-      setHoverNodeId('');
-    }
-  }, []);
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     const { clientX, clientY } = e;
@@ -69,9 +59,7 @@ export function useBlockSideToolbar({ container }: { container: HTMLDivElement }
   return {
     nodeId,
     ref,
-    handleToggleMenu,
-    menuOpen,
-    style
+    style,
   };
 }
 
@@ -101,4 +89,41 @@ function getNodeIdByPoint(x: number, y: number) {
         }
       ).el.getAttribute('data-block-id')
     : null;
+}
+
+const origin: {
+  anchorOrigin: PopoverOrigin;
+  transformOrigin: PopoverOrigin;
+} = {
+  anchorOrigin: {
+    vertical: 'bottom',
+    horizontal: 'right',
+  },
+  transformOrigin: {
+    vertical: 'bottom',
+    horizontal: 'left',
+  },
+};
+export function usePopover() {
+  const [anchorEl, setAnchorEl] = React.useState<HTMLButtonElement | null>(null);
+
+  const onClose = useCallback(() => {
+    setAnchorEl(null);
+  }, []);
+
+  const handleOpen = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    setAnchorEl(e.currentTarget);
+  }, []);
+
+  const open = Boolean(anchorEl);
+
+  return {
+    anchorEl,
+    onClose,
+    open,
+    handleOpen,
+    disableAutoFocus: true,
+    ...origin,
+  };
 }

@@ -17,7 +17,7 @@ abstract class RowFieldsDelegate {
   void onFieldsChanged(void Function(List<FieldInfo>) callback);
 }
 
-abstract class RowCacheDelegate {
+abstract mixin class RowCacheDelegate {
   UnmodifiableListView<FieldInfo> get fields;
   void onRowDispose();
 }
@@ -30,7 +30,7 @@ abstract class RowCacheDelegate {
 class RowCache {
   final String viewId;
 
-  /// _rows containers the current block's rows
+  /// _rows contains the current block's rows
   /// Use List to reverse the order of the GridRow.
   final RowList _rowList = RowList();
 
@@ -39,7 +39,7 @@ class RowCache {
   final RowChangesetNotifier _rowChangeReasonNotifier;
 
   UnmodifiableListView<RowInfo> get rowInfos {
-    var visibleRows = [..._rowList.rows];
+    final visibleRows = [..._rowList.rows];
     return UnmodifiableListView(visibleRows);
   }
 
@@ -83,13 +83,13 @@ class RowCache {
     await _cellCache.dispose();
   }
 
-  void applyRowsChanged(RowsChangesetPB changeset) {
+  void applyRowsChanged(RowsChangePB changeset) {
     _deleteRows(changeset.deletedRows);
     _insertRows(changeset.insertedRows);
     _updateRows(changeset.updatedRows);
   }
 
-  void applyRowsVisibility(RowsVisibilityChangesetPB changeset) {
+  void applyRowsVisibility(RowsVisibilityChangePB changeset) {
     _hideRows(changeset.invisibleRows);
     _showRows(changeset.visibleRows);
   }
@@ -138,7 +138,7 @@ class RowCache {
 
   void _updateRows(List<UpdatedRowPB> updatedRows) {
     if (updatedRows.isEmpty) return;
-    List<RowPB> rowPBs = [];
+    final List<RowPB> rowPBs = [];
     for (final updatedRow in updatedRows) {
       for (final fieldId in updatedRow.fieldIds) {
         final key = CellCacheKey(
@@ -185,7 +185,7 @@ class RowCache {
 
   RowUpdateCallback addListener({
     required RowId rowId,
-    void Function(CellByFieldId, RowsChangedReason)? onCellUpdated,
+    void Function(CellContextByFieldId, RowsChangedReason)? onCellUpdated,
     bool Function()? listenWhen,
   }) {
     listenerHandler() async {
@@ -197,7 +197,7 @@ class RowCache {
         if (onCellUpdated != null) {
           final rowInfo = _rowList.get(rowId);
           if (rowInfo != null) {
-            final CellByFieldId cellDataMap =
+            final CellContextByFieldId cellDataMap =
                 _makeGridCells(rowId, rowInfo.rowPB);
             onCellUpdated(cellDataMap, _rowChangeReasonNotifier.reason);
           }
@@ -220,7 +220,7 @@ class RowCache {
     _rowChangeReasonNotifier.removeListener(callback);
   }
 
-  CellByFieldId loadGridCells(RowId rowId) {
+  CellContextByFieldId loadGridCells(RowId rowId) {
     final RowPB? data = _rowList.get(rowId)?.rowPB;
     if (data == null) {
       _loadRow(rowId);
@@ -240,12 +240,12 @@ class RowCache {
     );
   }
 
-  CellByFieldId _makeGridCells(RowId rowId, RowPB? row) {
+  CellContextByFieldId _makeGridCells(RowId rowId, RowPB? row) {
     // ignore: prefer_collection_literals
-    var cellDataMap = CellByFieldId();
+    final cellDataMap = CellContextByFieldId();
     for (final field in _delegate.fields) {
       if (field.visibility) {
-        cellDataMap[field.id] = CellIdentifier(
+        cellDataMap[field.id] = DatabaseCellContext(
           rowId: rowId,
           viewId: viewId,
           fieldInfo: field,

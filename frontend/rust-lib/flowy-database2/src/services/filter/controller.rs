@@ -164,7 +164,7 @@ impl FilterController {
             let row_pb = RowPB::from(row.as_ref());
             notification
               .visible_rows
-              .push(InsertedRowPB::with_index(row_pb, index as i32))
+              .push(InsertedRowPB::new(row_pb).with_index(index as i32))
           }
         } else {
           notification.invisible_rows.push(row_id);
@@ -199,7 +199,7 @@ impl FilterController {
       ) {
         if is_visible {
           let row_pb = RowPB::from(row.as_ref());
-          visible_rows.push(InsertedRowPB::with_index(row_pb, index as i32))
+          visible_rows.push(InsertedRowPB::new(row_pb).with_index(index as i32))
         } else {
           invisible_rows.push(row_id);
         }
@@ -219,12 +219,14 @@ impl FilterController {
   }
 
   pub async fn did_receive_row_changed(&self, row_id: RowId) {
-    self
-      .gen_task(
-        FilterEvent::RowDidChanged(row_id),
-        QualityOfService::UserInteractive,
-      )
-      .await
+    if !self.cell_filter_cache.read().is_empty() {
+      self
+        .gen_task(
+          FilterEvent::RowDidChanged(row_id),
+          QualityOfService::UserInteractive,
+        )
+        .await
+    }
   }
 
   #[tracing::instrument(level = "trace", skip(self))]
@@ -323,7 +325,7 @@ impl FilterController {
             .write()
             .insert(field_id, NumberFilterPB::from_filter(filter.as_ref()));
         },
-        FieldType::DateTime => {
+        FieldType::DateTime | FieldType::LastEditedTime | FieldType::CreatedTime => {
           self
             .cell_filter_cache
             .write()

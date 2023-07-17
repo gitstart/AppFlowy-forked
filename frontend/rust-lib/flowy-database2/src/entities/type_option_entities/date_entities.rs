@@ -4,7 +4,7 @@ use strum_macros::EnumIter;
 
 use flowy_derive::{ProtoBuf, ProtoBuf_Enum};
 
-use crate::entities::CellIdPB;
+use crate::entities::{CellIdPB, FieldType};
 use crate::services::field::{DateFormat, DateTypeOption, TimeFormat};
 
 #[derive(Clone, Debug, Default, ProtoBuf)]
@@ -20,9 +20,6 @@ pub struct DateCellDataPB {
 
   #[pb(index = 4)]
   pub include_time: bool,
-
-  #[pb(index = 5)]
-  pub timezone_id: String,
 }
 
 #[derive(Clone, Debug, Default, ProtoBuf)]
@@ -38,9 +35,6 @@ pub struct DateChangesetPB {
 
   #[pb(index = 4, one_of)]
   pub include_time: Option<bool>,
-
-  #[pb(index = 5, one_of)]
-  pub timezone_id: Option<String>,
 }
 
 // Date
@@ -51,6 +45,12 @@ pub struct DateTypeOptionPB {
 
   #[pb(index = 2)]
   pub time_format: TimeFormatPB,
+
+  #[pb(index = 3)]
+  pub timezone_id: String,
+
+  #[pb(index = 4)]
+  pub field_type: FieldType,
 }
 
 impl From<DateTypeOption> for DateTypeOptionPB {
@@ -58,6 +58,8 @@ impl From<DateTypeOption> for DateTypeOptionPB {
     Self {
       date_format: data.date_format.into(),
       time_format: data.time_format.into(),
+      timezone_id: data.timezone_id,
+      field_type: data.field_type,
     }
   }
 }
@@ -67,6 +69,8 @@ impl From<DateTypeOptionPB> for DateTypeOption {
     Self {
       date_format: data.date_format.into(),
       time_format: data.time_format.into(),
+      timezone_id: data.timezone_id,
+      field_type: data.field_type,
     }
   }
 }

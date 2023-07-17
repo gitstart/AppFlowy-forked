@@ -265,6 +265,7 @@ class _BoardContentState extends State<BoardContent> {
         renderHook: renderHook,
         openCard: (context) => _openCard(
           viewId,
+          groupData.group.groupId,
           fieldController,
           rowPB,
           rowCache,
@@ -302,6 +303,7 @@ class _BoardContentState extends State<BoardContent> {
 
   void _openCard(
     String viewId,
+    String groupId,
     FieldController fieldController,
     RowPB rowPB,
     RowCache rowCache,
@@ -317,6 +319,7 @@ class _BoardContentState extends State<BoardContent> {
       rowId: rowInfo.rowPB.id,
       viewId: rowInfo.viewId,
       rowCache: rowCache,
+      groupId: groupId,
     );
 
     FlowyOverlay.show(
@@ -324,7 +327,7 @@ class _BoardContentState extends State<BoardContent> {
       builder: (BuildContext context) {
         return RowDetailPage(
           cellBuilder: GridCellBuilder(cellCache: dataController.cellCache),
-          dataController: dataController,
+          rowController: dataController,
         );
       },
     );
@@ -337,15 +340,7 @@ class _ToolbarBlocAdaptor extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<BoardBloc, BoardState>(
-      builder: (context, state) {
-        final bloc = context.read<BoardBloc>();
-        final toolbarContext = BoardToolbarContext(
-          viewId: bloc.viewId,
-          fieldController: bloc.fieldController,
-        );
-
-        return BoardToolbar(toolbarContext: toolbarContext);
-      },
+      builder: (context, state) => const BoardToolbar(),
     );
   }
 }
@@ -362,6 +357,8 @@ Widget? _buildHeaderIcon(GroupData customData) {
       }
       break;
     case FieldType.DateTime:
+    case FieldType.LastEditedTime:
+    case FieldType.CreatedTime:
       break;
     case FieldType.MultiSelect:
       break;

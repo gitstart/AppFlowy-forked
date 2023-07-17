@@ -17,7 +17,6 @@ import 'package:appflowy_backend/protobuf/flowy-error/errors.pbserver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:textstyle_extensions/textstyle_extensions.dart';
 import '../../../../grid/presentation/layout/sizes.dart';
 import '../../../../grid/presentation/widgets/common/type_option_separator.dart';
 import '../../../../grid/presentation/widgets/header/type_option/date.dart';
@@ -107,7 +106,7 @@ class _CellCalendarWidgetState extends State<_CellCalendarWidget> {
       )..add(const DateCellCalendarEvent.initial()),
       child: BlocBuilder<DateCellCalendarBloc, DateCellCalendarState>(
         builder: (context, state) {
-          List<Widget> children = [
+          final List<Widget> children = [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12.0),
               child: _buildCalendar(context),
@@ -198,11 +197,13 @@ class _CellCalendarWidgetState extends State<_CellCalendarWidget> {
             outsideDecoration: boxDecoration,
             defaultTextStyle: textStyle,
             weekendTextStyle: textStyle,
-            selectedTextStyle:
-                textStyle.textColor(Theme.of(context).colorScheme.surface),
+            selectedTextStyle: textStyle.copyWith(
+              color: Theme.of(context).colorScheme.surface,
+            ),
             todayTextStyle: textStyle,
-            outsideTextStyle:
-                textStyle.textColor(Theme.of(context).disabledColor),
+            outsideTextStyle: textStyle.copyWith(
+              color: Theme.of(context).disabledColor,
+            ),
           ),
           selectedDayPredicate: (day) => isSameDay(state.dateTime, day),
           onDaySelected: (selectedDay, focusedDay) {
@@ -402,7 +403,7 @@ class _CalDateTimeSettingState extends State<_CalDateTimeSetting> {
 
   @override
   Widget build(BuildContext context) {
-    List<Widget> children = [
+    final List<Widget> children = [
       AppFlowyPopover(
         mutex: timeSettingPopoverMutex,
         triggerActions: PopoverTriggerFlags.hover | PopoverTriggerFlags.click,

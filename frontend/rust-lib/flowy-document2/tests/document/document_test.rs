@@ -4,8 +4,11 @@ use collab_document::blocks::{Block, BlockAction, BlockActionPayload, BlockActio
 use nanoid::nanoid;
 use serde_json::{json, to_value, Value};
 
+use flowy_document2::document_block_keys::PARAGRAPH_BLOCK_TYPE;
+use flowy_document2::document_data::default_document_data;
+use flowy_document2::manager::DocumentManager;
+
 use crate::document::util::default_collab_builder;
-use flowy_document2::{document_data::DocumentDataWrapper, manager::DocumentManager};
 
 use super::util::FakeUser;
 
@@ -16,12 +19,12 @@ fn restore_document() {
 
   // create a document
   let doc_id: String = nanoid!(10);
-  let data = DocumentDataWrapper::default();
+  let data = default_document_data();
   let document_a = manager
-    .create_document(doc_id.clone(), data.clone())
+    .create_document(doc_id.clone(), Some(data.clone()))
     .unwrap();
   let data_a = document_a.lock().get_document().unwrap();
-  assert_eq!(data_a, data.0);
+  assert_eq!(data_a, data);
 
   // open a document
   let data_b = manager
@@ -31,11 +34,11 @@ fn restore_document() {
     .get_document()
     .unwrap();
   // close a document
-  _ = manager.close_document(doc_id.clone());
-  assert_eq!(data_b, data.0);
+  _ = manager.close_document(&doc_id);
+  assert_eq!(data_b, data);
 
   // restore
-  _ = manager.create_document(doc_id.clone(), data.clone());
+  _ = manager.create_document(doc_id.clone(), Some(data.clone()));
   // open a document
   let data_b = manager
     .open_document(doc_id.clone())
@@ -44,9 +47,9 @@ fn restore_document() {
     .get_document()
     .unwrap();
   // close a document
-  _ = manager.close_document(doc_id);
+  _ = manager.close_document(&doc_id);
 
-  assert_eq!(data_b, data.0);
+  assert_eq!(data_b, data);
 }
 
 #[test]
@@ -55,19 +58,19 @@ fn document_apply_insert_action() {
   let manager = DocumentManager::new(Arc::new(user), default_collab_builder());
 
   let doc_id: String = nanoid!(10);
-  let data = DocumentDataWrapper::default();
+  let data = default_document_data();
 
   // create a document
-  _ = manager.create_document(doc_id.clone(), data.clone());
+  _ = manager.create_document(doc_id.clone(), Some(data.clone()));
 
   // open a document
   let document = manager.open_document(doc_id.clone()).unwrap();
-  let page_block = document.lock().get_block(&data.0.page_id).unwrap();
+  let page_block = document.lock().get_block(&data.page_id).unwrap();
 
   // insert a text block
   let text_block = Block {
     id: nanoid!(10),
-    ty: "text".to_string(),
+    ty: PARAGRAPH_BLOCK_TYPE.to_string(),
     parent: page_block.id,
     children: nanoid!(10),
     external_id: None,
@@ -85,7 +88,7 @@ fn document_apply_insert_action() {
   document.lock().apply_action(vec![insert_text_action]);
   let data_a = document.lock().get_document().unwrap();
   // close the original document
-  _ = manager.close_document(doc_id.clone());
+  _ = manager.close_document(&doc_id);
 
   // re-open the document
   let data_b = manager
@@ -95,7 +98,7 @@ fn document_apply_insert_action() {
     .get_document()
     .unwrap();
   // close a document
-  _ = manager.close_document(doc_id);
+  _ = manager.close_document(&doc_id);
 
   assert_eq!(data_b, data_a);
 }
@@ -106,14 +109,14 @@ fn document_apply_update_page_action() {
   let manager = DocumentManager::new(Arc::new(user), default_collab_builder());
 
   let doc_id: String = nanoid!(10);
-  let data = DocumentDataWrapper::default();
+  let data = default_document_data();
 
   // create a document
-  _ = manager.create_document(doc_id.clone(), data.clone());
+  _ = manager.create_document(doc_id.clone(), Some(data.clone()));
 
   // open a document
   let document = manager.open_document(doc_id.clone()).unwrap();
-  let page_block = document.lock().get_block(&data.0.page_id).unwrap();
+  let page_block = document.lock().get_block(&data.page_id).unwrap();
 
   let mut page_block_clone = page_block;
   page_block_clone.data = HashMap::new();
@@ -132,12 +135,12 @@ fn document_apply_update_page_action() {
   let actions = vec![action];
   tracing::trace!("{:?}", &actions);
   document.lock().apply_action(actions);
-  let page_block_old = document.lock().get_block(&data.0.page_id).unwrap();
-  _ = manager.close_document(doc_id.clone());
+  let page_block_old = document.lock().get_block(&data.page_id).unwrap();
+  _ = manager.close_document(&doc_id);
 
   // re-open the document
   let document = manager.open_document(doc_id).unwrap();
-  let page_block_new = document.lock().get_block(&data.0.page_id).unwrap();
+  let page_block_new = document.lock().get_block(&data.page_id).unwrap();
   assert_eq!(page_block_old, page_block_new);
   assert!(page_block_new.data.contains_key("delta"));
 }
@@ -148,20 +151,20 @@ fn document_apply_update_action() {
   let manager = DocumentManager::new(Arc::new(user), default_collab_builder());
 
   let doc_id: String = nanoid!(10);
-  let data = DocumentDataWrapper::default();
+  let data = default_document_data();
 
   // create a document
-  _ = manager.create_document(doc_id.clone(), data.clone());
+  _ = manager.create_document(doc_id.clone(), Some(data.clone()));
 
   // open a document
   let document = manager.open_document(doc_id.clone()).unwrap();
-  let page_block = document.lock().get_block(&data.0.page_id).unwrap();
+  let page_block = document.lock().get_block(&data.page_id).unwrap();
 
   // insert a text block
   let text_block_id = nanoid!(10);
   let text_block = Block {
     id: text_block_id.clone(),
-    ty: "text".to_string(),
+    ty: PARAGRAPH_BLOCK_TYPE.to_string(),
     parent: page_block.id,
     children: nanoid!(10),
     external_id: None,
@@ -201,12 +204,12 @@ fn document_apply_update_action() {
   };
   document.lock().apply_action(vec![update_text_action]);
   // close the original document
-  _ = manager.close_document(doc_id.clone());
+  _ = manager.close_document(&doc_id);
 
   // re-open the document
   let document = manager.open_document(doc_id.clone()).unwrap();
   let block = document.lock().get_block(&text_block_id).unwrap();
   assert_eq!(block.data, updated_text_block_data);
   // close a document
-  _ = manager.close_document(doc_id);
+  _ = manager.close_document(&doc_id);
 }

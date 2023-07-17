@@ -82,15 +82,17 @@ impl SortController {
 
   pub async fn did_receive_row_changed(&self, row_id: RowId) {
     let task_type = SortEvent::RowDidChanged(row_id);
-    self.gen_task(task_type, QualityOfService::Background).await;
+    if !self.sorts.is_empty() {
+      self.gen_task(task_type, QualityOfService::Background).await;
+    }
   }
 
-  #[tracing::instrument(name = "process_sort_task", level = "trace", skip_all, err)]
+  // #[tracing::instrument(name = "process_sort_task", level = "trace", skip_all, err)]
   pub async fn process(&mut self, predicate: &str) -> FlowyResult<()> {
     let event_type = SortEvent::from_str(predicate).unwrap();
     let mut rows = self.delegate.get_rows(&self.view_id).await;
     match event_type {
-      SortEvent::SortDidChanged => {
+      SortEvent::SortDidChanged | SortEvent::DeleteAllSorts => {
         self.sort_rows(&mut rows).await;
         let row_orders = rows
           .iter()
@@ -165,11 +167,11 @@ impl SortController {
   pub async fn delete_all_sorts(&mut self) {
     self.sorts.clear();
     self
-      .gen_task(SortEvent::SortDidChanged, QualityOfService::Background)
+      .gen_task(SortEvent::DeleteAllSorts, QualityOfService::Background)
       .await;
   }
 
-  pub async fn did_update_view_field_type_option(&self, _field_rev: &Field) {
+  pub async fn did_update_field_type_option(&self, _field: &Field) {
     //
   }
 
@@ -292,6 +294,7 @@ fn cmp_cell(
 enum SortEvent {
   SortDidChanged,
   RowDidChanged(RowId),
+  DeleteAllSorts,
 }
 
 impl ToString for SortEvent {

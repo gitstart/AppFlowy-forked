@@ -20,14 +20,17 @@ class GridCellBuilder {
     required this.cellCache,
   });
 
-  GridCellWidget build(CellIdentifier cellId, {GridCellStyle? style}) {
+  GridCellWidget build(
+    DatabaseCellContext cellContext, {
+    GridCellStyle? style,
+  }) {
     final cellControllerBuilder = CellControllerBuilder(
-      cellId: cellId,
+      cellContext: cellContext,
       cellCache: cellCache,
     );
 
-    final key = cellId.key();
-    switch (cellId.fieldType) {
+    final key = cellContext.key();
+    switch (cellContext.fieldType) {
       case FieldType.Checkbox:
         return GridCheckboxCell(
           cellControllerBuilder: cellControllerBuilder,
@@ -37,6 +40,14 @@ class GridCellBuilder {
         return GridDateCell(
           cellControllerBuilder: cellControllerBuilder,
           key: key,
+          style: style,
+        );
+      case FieldType.LastEditedTime:
+      case FieldType.CreatedTime:
+        return GridDateCell(
+          cellControllerBuilder: cellControllerBuilder,
+          key: key,
+          editable: false,
           style: style,
         );
       case FieldType.SingleSelect:
@@ -74,6 +85,7 @@ class GridCellBuilder {
           key: key,
         );
     }
+
     throw UnimplementedError;
   }
 }
@@ -83,7 +95,7 @@ class BlankCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container();
+    return const SizedBox.shrink();
   }
 }
 

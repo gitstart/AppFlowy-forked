@@ -54,7 +54,7 @@ class SelectOptionTypeOptionEditor extends StatelessWidget {
         ],
         child: BlocBuilder<EditSelectOptionBloc, EditSelectOptionState>(
           builder: (context, state) {
-            List<Widget> cells = [
+            final List<Widget> cells = [
               _OptionNameTextField(
                 name: state.option.name,
                 autoFocus: autoFocus,
@@ -226,7 +226,7 @@ class _SelectOptionColorCell extends StatelessWidget {
       dimension: 16,
       child: Container(
         decoration: BoxDecoration(
-          color: color.make(context),
+          color: color.toColor(context),
           shape: BoxShape.circle,
         ),
       ),

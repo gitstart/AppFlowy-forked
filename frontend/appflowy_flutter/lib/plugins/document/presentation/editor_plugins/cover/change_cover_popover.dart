@@ -150,7 +150,7 @@ class _ChangeCoverPopoverState extends State<ChangeCoverPopover> {
               fontColor: Theme.of(context).colorScheme.tertiary,
               onPressed: () async {
                 final hasFileImageCover = CoverSelectionType.fromString(
-                      widget.node.attributes[kCoverSelectionTypeAttribute],
+                      widget.node.attributes[CoverBlockKeys.selectionType],
                     ) ==
                     CoverSelectionType.file;
                 final changeCoverBloc = context.read<ChangeCoverPopoverBloc>();
@@ -220,9 +220,9 @@ class _ChangeCoverPopoverState extends State<ChangeCoverPopover> {
       pickerBackgroundColor: theme.cardColor,
       pickerItemHoverColor: theme.hoverColor,
       selectedBackgroundColorHex:
-          widget.node.attributes[kCoverSelectionTypeAttribute] ==
+          widget.node.attributes[CoverBlockKeys.selectionType] ==
                   CoverSelectionType.color.toString()
-              ? widget.node.attributes[kCoverSelectionAttribute]
+              ? widget.node.attributes[CoverBlockKeys.selection]
               : 'ffffff',
       backgroundColorOptions:
           _generateBackgroundColorOptions(widget.editorState),
@@ -237,7 +237,7 @@ class _ChangeCoverPopoverState extends State<ChangeCoverPopover> {
     return BlocBuilder<ChangeCoverPopoverBloc, ChangeCoverPopoverState>(
       builder: (context, state) {
         if (state is Loaded) {
-          List<String> images = state.imageNames;
+          final List<String> images = state.imageNames;
           return GridView.builder(
             shrinkWrap: true,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -284,7 +284,7 @@ class _ChangeCoverPopoverState extends State<ChangeCoverPopover> {
                   final changeCoverBloc =
                       context.read<ChangeCoverPopoverBloc>();
                   final deletingCurrentCover =
-                      widget.node.attributes[kCoverSelectionAttribute] ==
+                      widget.node.attributes[CoverBlockKeys.selection] ==
                           images[index - 1];
                   if (deletingCurrentCover) {
                     await showDialog(
@@ -465,17 +465,11 @@ class _CoverColorPickerState extends State<CoverColorPicker> {
           },
           platform: TargetPlatform.windows,
         ),
-        child: ListView.builder(
-          controller: scrollController,
-          shrinkWrap: true,
-          itemCount: widget.backgroundColorOptions.length,
-          scrollDirection: Axis.horizontal,
-          itemBuilder: (context, index) {
-            return _buildColorItems(
-              widget.backgroundColorOptions,
-              widget.selectedBackgroundColorHex,
-            );
-          },
+        child: SingleChildScrollView(
+          child: _buildColorItems(
+            widget.backgroundColorOptions,
+            widget.selectedBackgroundColorHex,
+          ),
         ),
       ),
     );
@@ -499,27 +493,25 @@ class _CoverColorPickerState extends State<CoverColorPicker> {
       child: Padding(
         padding: const EdgeInsets.only(right: 10.0),
         child: SizedBox.square(
-          dimension: 25,
+          dimension: isChecked ? 24 : 25,
           child: Container(
             decoration: BoxDecoration(
-              color: isChecked
-                  ? Colors.transparent
-                  : Color(int.tryParse(option.colorHex) ?? 0xFFFFFFFF),
+              color: option.colorHex.toColor(),
               border: isChecked
                   ? Border.all(
-                      color: Color(int.tryParse(option.colorHex) ?? 0xFFFFFF),
+                      color: const Color(0xFFFFFFFF),
+                      width: 2.0,
                     )
                   : null,
               shape: BoxShape.circle,
             ),
             child: isChecked
                 ? SizedBox.square(
-                    dimension: 25,
+                    dimension: 24,
                     child: Container(
                       margin: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
-                        color:
-                            Color(int.tryParse(option.colorHex) ?? 0xFFFFFFFF),
+                        color: option.colorHex.toColor(),
                         shape: BoxShape.circle,
                       ),
                     ),

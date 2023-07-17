@@ -12,6 +12,10 @@ pub fn init() -> AFPlugin {
     .event(ConfigEvent::GetKeyValue, get_key_value_handler)
     .event(ConfigEvent::RemoveKeyValue, remove_key_value_handler)
     .event(ConfigEvent::SetSupabaseConfig, set_supabase_config_handler)
+    .event(
+      ConfigEvent::SetCollabPluginConfig,
+      set_collab_plugin_config_handler,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Display, ProtoBuf_Enum, Flowy_Event)]
@@ -26,6 +30,11 @@ pub enum ConfigEvent {
   #[event(input = "KeyPB")]
   RemoveKeyValue = 2,
 
+  /// Set the supabase config. It will be written to the environment variables.
+  /// Check out the `write_to_env` of [SupabaseConfigPB].
   #[event(input = "SupabaseConfigPB")]
   SetSupabaseConfig = 3,
+
+  #[event(input = "CollabPluginConfigPB")]
+  SetCollabPluginConfig = 4,
 }

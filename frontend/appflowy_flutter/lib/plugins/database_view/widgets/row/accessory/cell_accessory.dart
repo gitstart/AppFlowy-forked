@@ -41,7 +41,7 @@ class GridCellAccessoryBuilder {
   }
 }
 
-abstract class GridCellAccessoryState {
+abstract mixin class GridCellAccessoryState {
   void onTap();
 
   // The accessory will be hidden if enable() return false;
@@ -121,7 +121,7 @@ class _AccessoryHoverState extends State<AccessoryHover> {
 
   @override
   Widget build(BuildContext context) {
-    List<Widget> children = [
+    final List<Widget> children = [
       Padding(padding: widget.contentPadding, child: widget.child),
     ];
 

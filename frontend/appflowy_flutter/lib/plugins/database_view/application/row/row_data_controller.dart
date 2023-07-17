@@ -3,10 +3,11 @@ import '../cell/cell_service.dart';
 import 'row_cache.dart';
 import 'row_service.dart';
 
-typedef OnRowChanged = void Function(CellByFieldId, RowsChangedReason);
+typedef OnRowChanged = void Function(CellContextByFieldId, RowsChangedReason);
 
 class RowController {
   final RowId rowId;
+  final String? groupId;
   final String viewId;
   final List<VoidCallback> _onRowChangedListeners = [];
   final RowCache _rowCache;
@@ -17,9 +18,10 @@ class RowController {
     required this.rowId,
     required this.viewId,
     required RowCache rowCache,
+    this.groupId,
   }) : _rowCache = rowCache;
 
-  CellByFieldId loadData() {
+  CellContextByFieldId loadData() {
     return _rowCache.loadGridCells(rowId);
   }
 

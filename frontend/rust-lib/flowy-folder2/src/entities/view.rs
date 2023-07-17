@@ -1,11 +1,14 @@
-use crate::entities::parser::view::{ViewDesc, ViewIdentify, ViewName, ViewThumbnail};
-use crate::view_ext::gen_view_id;
-use collab_folder::core::{View, ViewLayout};
-use flowy_derive::{ProtoBuf, ProtoBuf_Enum};
-use flowy_error::ErrorCode;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ops::{Deref, DerefMut};
+
+use collab_folder::core::{View, ViewLayout};
+
+use flowy_derive::{ProtoBuf, ProtoBuf_Enum};
+use flowy_error::ErrorCode;
+
+use crate::entities::parser::view::{ViewDesc, ViewIdentify, ViewName, ViewThumbnail};
+use crate::view_operation::gen_view_id;
 
 #[derive(Eq, PartialEq, ProtoBuf, Debug, Default, Clone)]
 pub struct ViewPB {
@@ -31,7 +34,7 @@ pub struct ViewPB {
 pub fn view_pb_without_child_views(view: View) -> ViewPB {
   ViewPB {
     id: view.id,
-    parent_view_id: view.bid,
+    parent_view_id: view.parent_view_id,
     name: view.name,
     create_time: view.created_at,
     child_views: Default::default(),
@@ -43,7 +46,7 @@ pub fn view_pb_without_child_views(view: View) -> ViewPB {
 pub fn view_pb_with_child_views(view: View, child_views: Vec<View>) -> ViewPB {
   ViewPB {
     id: view.id,
-    parent_view_id: view.bid,
+    parent_view_id: view.parent_view_id,
     name: view.name,
     create_time: view.created_at,
     child_views: child_views
@@ -57,14 +60,14 @@ pub fn view_pb_with_child_views(view: View, child_views: Vec<View>) -> ViewPB {
 #[derive(Eq, PartialEq, Hash, Debug, ProtoBuf_Enum, Clone)]
 pub enum ViewLayoutPB {
   Document = 0,
-  Grid = 3,
-  Board = 4,
-  Calendar = 5,
+  Grid = 1,
+  Board = 2,
+  Calendar = 3,
 }
 
 impl std::default::Default for ViewLayoutPB {
   fn default() -> Self {
-    ViewLayoutPB::Grid
+    ViewLayoutPB::Document
   }
 }
 
@@ -123,7 +126,7 @@ pub struct RepeatedViewIdPB {
 #[derive(Default, ProtoBuf)]
 pub struct CreateViewPayloadPB {
   #[pb(index = 1)]
-  pub belong_to_id: String,
+  pub parent_view_id: String,
 
   #[pb(index = 2)]
   pub name: String,
@@ -141,18 +144,24 @@ pub struct CreateViewPayloadPB {
   pub initial_data: Vec<u8>,
 
   #[pb(index = 7)]
-  pub ext: HashMap<String, String>,
+  pub meta: HashMap<String, String>,
+
+  /// Mark the view as current view after creation.
+  #[pb(index = 8)]
+  pub set_as_current: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct CreateViewParams {
-  pub belong_to_id: String,
+  pub parent_view_id: String,
   pub name: String,
   pub desc: String,
   pub layout: ViewLayoutPB,
   pub view_id: String,
   pub initial_data: Vec<u8>,
-  pub ext: HashMap<String, String>,
+  pub meta: HashMap<String, String>,
+  /// Mark the view as current view after creation.
+  pub set_as_current: bool,
 }
 
 impl TryInto<CreateViewParams> for CreateViewPayloadPB {
@@ -160,17 +169,18 @@ impl TryInto<CreateViewParams> for CreateViewPayloadPB {
 
   fn try_into(self) -> Result<CreateViewParams, Self::Error> {
     let name = ViewName::parse(self.name)?.0;
-    let belong_to_id = ViewIdentify::parse(self.belong_to_id)?.0;
+    let belong_to_id = ViewIdentify::parse(self.parent_view_id)?.0;
     let view_id = gen_view_id();
 
     Ok(CreateViewParams {
-      belong_to_id,
+      parent_view_id: belong_to_id,
       name,
       desc: self.desc,
       layout: self.layout,
       view_id,
       initial_data: self.initial_data,
-      ext: self.ext,
+      meta: self.meta,
+      set_as_current: self.set_as_current,
     })
   }
 }
@@ -219,6 +229,9 @@ pub struct UpdateViewPayloadPB {
 
   #[pb(index = 4, one_of)]
   pub thumbnail: Option<String>,
+
+  #[pb(index = 5, one_of)]
+  pub layout: Option<ViewLayoutPB>,
 }
 
 #[derive(Clone, Debug)]
@@ -227,6 +240,7 @@ pub struct UpdateViewParams {
   pub name: Option<String>,
   pub desc: Option<String>,
   pub thumbnail: Option<String>,
+  pub layout: Option<ViewLayout>,
 }
 
 impl TryInto<UpdateViewParams> for UpdateViewPayloadPB {
@@ -255,54 +269,38 @@ impl TryInto<UpdateViewParams> for UpdateViewPayloadPB {
       name,
       desc,
       thumbnail,
+      layout: self.layout.map(|ty| ty.into()),
     })
   }
 }
 
-#[derive(ProtoBuf_Enum)]
-pub enum MoveFolderItemType {
-  MoveApp = 0,
-  MoveView = 1,
-}
-
-impl std::default::Default for MoveFolderItemType {
-  fn default() -> Self {
-    MoveFolderItemType::MoveApp
-  }
-}
-
 #[derive(Default, ProtoBuf)]
-pub struct MoveFolderItemPayloadPB {
+pub struct MoveViewPayloadPB {
   #[pb(index = 1)]
-  pub item_id: String,
+  pub view_id: String,
 
   #[pb(index = 2)]
   pub from: i32,
 
   #[pb(index = 3)]
   pub to: i32,
-
-  #[pb(index = 4)]
-  pub ty: MoveFolderItemType,
 }
 
 pub struct MoveViewParams {
-  pub item_id: String,
+  pub view_id: String,
   pub from: usize,
   pub to: usize,
-  pub ty: MoveFolderItemType,
 }
 
-impl TryInto<MoveViewParams> for MoveFolderItemPayloadPB {
+impl TryInto<MoveViewParams> for MoveViewPayloadPB {
   type Error = ErrorCode;
 
   fn try_into(self) -> Result<MoveViewParams, Self::Error> {
-    let view_id = ViewIdentify::parse(self.item_id)?.0;
+    let view_id = ViewIdentify::parse(self.view_id)?.0;
     Ok(MoveViewParams {
-      item_id: view_id,
+      view_id,
       from: self.from as usize,
       to: self.to as usize,
-      ty: self.ty,
     })
   }
 }

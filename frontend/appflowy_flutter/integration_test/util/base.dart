@@ -1,8 +1,8 @@
 import 'dart:io';
 
+import 'package:appflowy/core/config/kv_keys.dart';
 import 'package:appflowy/main.dart' as app;
 import 'package:appflowy/startup/tasks/prelude.dart';
-import 'package:appflowy/workspace/application/settings/settings_location_cubit.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,7 +21,7 @@ class TestFolder {
   static Future<void> setTestLocation(String? name) async {
     final location = await testLocation(name);
     SharedPreferences.setMockInitialValues({
-      kSettingsLocationDefaultLocation: location.path,
+      KVKeys.pathLocation: location.path,
     });
     return;
   }
@@ -36,7 +36,7 @@ class TestFolder {
   /// Get current using location.
   static Future<String> currentLocation() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(kSettingsLocationDefaultLocation)!;
+    return prefs.getString(KVKeys.pathLocation)!;
   }
 
   /// Get default location under development environment.
@@ -58,17 +58,21 @@ class TestFolder {
 
 extension AppFlowyTestBase on WidgetTester {
   Future<void> initializeAppFlowy() async {
-    const MethodChannel('hotkey_manager')
-        .setMockMethodCallHandler((MethodCall methodCall) async {
-      if (methodCall.method == 'unregisterAll') {
-        // do nothing
-      }
-    });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('hotkey_manager'),
+      (MethodCall methodCall) async {
+        if (methodCall.method == 'unregisterAll') {
+          // do nothing
+        }
+
+        return;
+      },
+    );
 
     await app.main();
     await wait(3000);
     await pumpAndSettle(const Duration(seconds: 2));
-    return;
   }
 
   Future<void> tapButton(
@@ -87,7 +91,7 @@ extension AppFlowyTestBase on WidgetTester {
     String tr, {
     int milliseconds = 500,
   }) async {
-    final button = find.text(tr);
+    final button = find.text(tr, findRichText: true);
     await tapButton(
       button,
       milliseconds: milliseconds,

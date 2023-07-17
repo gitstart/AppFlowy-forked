@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'package:appflowy_backend/protobuf/flowy-database2/checklist_entities.pb.dart';
 import 'package:appflowy_backend/protobuf/flowy-database2/date_entities.pb.dart';
 import 'package:appflowy_backend/protobuf/flowy-database2/select_option.pb.dart';
 import 'package:appflowy_backend/protobuf/flowy-database2/url_entities.pb.dart';
@@ -24,40 +25,39 @@ class CellBackendService {
   CellBackendService();
 
   Future<Either<void, FlowyError>> updateCell({
-    required CellIdentifier cellId,
+    required DatabaseCellContext cellContext,
     required String data,
   }) {
     final payload = CellChangesetPB.create()
-      ..viewId = cellId.viewId
-      ..fieldId = cellId.fieldId
-      ..rowId = cellId.rowId
+      ..viewId = cellContext.viewId
+      ..fieldId = cellContext.fieldId
+      ..rowId = cellContext.rowId
       ..cellChangeset = data;
     return DatabaseEventUpdateCell(payload).send();
   }
 
   Future<Either<CellPB, FlowyError>> getCell({
-    required CellIdentifier cellId,
+    required DatabaseCellContext cellContext,
   }) {
     final payload = CellIdPB.create()
-      ..viewId = cellId.viewId
-      ..fieldId = cellId.fieldId
-      ..rowId = cellId.rowId;
+      ..viewId = cellContext.viewId
+      ..fieldId = cellContext.fieldId
+      ..rowId = cellContext.rowId;
     return DatabaseEventGetCell(payload).send();
   }
 }
 
-/// Id of the cell
 /// We can locate the cell by using database + rowId + field.id.
 @freezed
-class CellIdentifier with _$CellIdentifier {
-  const factory CellIdentifier({
+class DatabaseCellContext with _$DatabaseCellContext {
+  const factory DatabaseCellContext({
     required String viewId,
     required RowId rowId,
     required FieldInfo fieldInfo,
-  }) = _CellIdentifier;
+  }) = _DatabaseCellContext;
 
   // ignore: unused_element
-  const CellIdentifier._();
+  const DatabaseCellContext._();
 
   String get fieldId => fieldInfo.id;
 

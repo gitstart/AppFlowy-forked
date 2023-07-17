@@ -1,5 +1,5 @@
-use appflowy_integrate::collab_builder::AppFlowyCollabBuilder;
-use appflowy_integrate::config::AppFlowyCollabConfig;
+use appflowy_integrate::collab_builder::{AppFlowyCollabBuilder, CloudStorageType};
+
 use std::sync::Arc;
 
 use appflowy_integrate::RocksCollabDB;
@@ -24,8 +24,8 @@ impl DocumentUser for FakeUser {
     Ok(1)
   }
 
-  fn token(&self) -> Result<String, flowy_error::FlowyError> {
-    Ok("1".to_string())
+  fn token(&self) -> Result<Option<String>, flowy_error::FlowyError> {
+    Ok(None)
   }
 
   fn collab_db(&self) -> Result<std::sync::Arc<RocksCollabDB>, flowy_error::FlowyError> {
@@ -50,6 +50,6 @@ pub fn db() -> Arc<RocksCollabDB> {
 }
 
 pub fn default_collab_builder() -> Arc<AppFlowyCollabBuilder> {
-  let builder = AppFlowyCollabBuilder::new(AppFlowyCollabConfig::default());
+  let builder = AppFlowyCollabBuilder::new(CloudStorageType::Local, None);
   Arc::new(builder)
 }

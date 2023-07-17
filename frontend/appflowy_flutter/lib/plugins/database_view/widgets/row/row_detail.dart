@@ -1,8 +1,10 @@
 import 'package:appflowy/plugins/database_view/application/cell/cell_service.dart';
 import 'package:appflowy/plugins/database_view/application/field/type_option/type_option_context.dart';
+import 'package:appflowy/plugins/database_view/application/field/type_option/type_option_service.dart';
 import 'package:appflowy/plugins/database_view/application/row/row_data_controller.dart';
 import 'package:appflowy/plugins/database_view/grid/application/row/row_detail_bloc.dart';
 import 'package:appflowy/workspace/presentation/widgets/dialogs.dart';
+import 'package:appflowy_backend/log.dart';
 import 'package:collection/collection.dart';
 import 'package:flowy_infra/theme_extension.dart';
 import 'package:flowy_infra/image.dart';
@@ -26,11 +28,11 @@ import '../../grid/presentation/widgets/header/field_cell.dart';
 import '../../grid/presentation/widgets/header/field_editor.dart';
 
 class RowDetailPage extends StatefulWidget with FlowyOverlayDelegate {
-  final RowController dataController;
+  final RowController rowController;
   final GridCellBuilder cellBuilder;
 
   const RowDetailPage({
-    required this.dataController,
+    required this.rowController,
     required this.cellBuilder,
     Key? key,
   }) : super(key: key);
@@ -49,7 +51,7 @@ class _RowDetailPageState extends State<RowDetailPage> {
     return FlowyDialog(
       child: BlocProvider(
         create: (context) {
-          return RowDetailBloc(dataController: widget.dataController)
+          return RowDetailBloc(dataController: widget.rowController)
             ..add(const RowDetailEvent.initial());
         },
         child: ListView(
@@ -69,11 +71,11 @@ class _RowDetailPageState extends State<RowDetailPage> {
   Widget _responsiveRowInfo() {
     final rowDataColumn = _PropertyColumn(
       cellBuilder: widget.cellBuilder,
-      viewId: widget.dataController.viewId,
+      viewId: widget.rowController.viewId,
     );
     final rowOptionColumn = _RowOptionColumn(
-      viewId: widget.dataController.viewId,
-      rowId: widget.dataController.rowId,
+      viewId: widget.rowController.viewId,
+      rowController: widget.rowController,
     );
     if (MediaQuery.of(context).size.width > 800) {
       return Row(
@@ -134,7 +136,7 @@ class _PropertyColumn extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _RowTitle(
-              cellId: state.gridCells
+              cellContext: state.gridCells
                   .firstWhereOrNull((e) => e.fieldInfo.isPrimary),
               cellBuilder: cellBuilder,
             ),
@@ -145,7 +147,7 @@ class _PropertyColumn extends StatelessWidget {
                   (cell) => Padding(
                     padding: const EdgeInsets.only(bottom: 4.0),
                     child: _PropertyCell(
-                      cellId: cell,
+                      cellContext: cell,
                       cellBuilder: cellBuilder,
                     ),
                   ),
@@ -161,14 +163,14 @@ class _PropertyColumn extends StatelessWidget {
 }
 
 class _RowTitle extends StatelessWidget {
-  final CellIdentifier? cellId;
+  final DatabaseCellContext? cellContext;
   final GridCellBuilder cellBuilder;
-  const _RowTitle({this.cellId, required this.cellBuilder, Key? key})
+  const _RowTitle({this.cellContext, required this.cellBuilder, Key? key})
       : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    if (cellId == null) {
+    if (cellContext == null) {
       return const SizedBox();
     }
     final style = GridTextCellStyle(
@@ -176,7 +178,7 @@ class _RowTitle extends StatelessWidget {
       textStyle: Theme.of(context).textTheme.titleLarge,
       autofocus: true,
     );
-    return cellBuilder.build(cellId!, style: style);
+    return cellBuilder.build(cellContext!, style: style);
   }
 }
 
@@ -194,6 +196,7 @@ class _CreatePropertyButton extends StatefulWidget {
 
 class _CreatePropertyButtonState extends State<_CreatePropertyButton> {
   late PopoverController popoverController;
+  late TypeOptionPB typeOption;
 
   @override
   void initState() {
@@ -207,6 +210,7 @@ class _CreatePropertyButtonState extends State<_CreatePropertyButton> {
       constraints: BoxConstraints.loose(const Size(240, 200)),
       controller: popoverController,
       direction: PopoverDirection.topWithLeftAligned,
+      triggerActions: PopoverTriggerFlags.none,
       margin: EdgeInsets.zero,
       child: SizedBox(
         height: 40,
@@ -216,7 +220,18 @@ class _CreatePropertyButtonState extends State<_CreatePropertyButton> {
             color: AFThemeExtension.of(context).textColor,
           ),
           hoverColor: AFThemeExtension.of(context).lightGreyHover,
-          onTap: () {},
+          onTap: () async {
+            final result = await TypeOptionBackendService.createFieldTypeOption(
+              viewId: widget.viewId,
+            );
+            result.fold(
+              (l) {
+                typeOption = l;
+                popoverController.show();
+              },
+              (r) => Log.error("Failed to create field type option: $r"),
+            );
+          },
           leftIcon: svgWidget(
             "home/add",
             color: AFThemeExtension.of(context).textColor,
@@ -226,10 +241,12 @@ class _CreatePropertyButtonState extends State<_CreatePropertyButton> {
       popupBuilder: (BuildContext popOverContext) {
         return FieldEditor(
           viewId: widget.viewId,
-          typeOptionLoader: NewFieldTypeOptionLoader(viewId: widget.viewId),
+          typeOptionLoader: FieldTypeOptionLoader(
+            viewId: widget.viewId,
+            field: typeOption.field_2,
+          ),
           onDeleted: (fieldId) {
             popoverController.close();
-
             NavigatorAlertDialog(
               title: LocaleKeys.grid_field_deleteFieldPromptMessage.tr(),
               confirm: () {
@@ -246,10 +263,10 @@ class _CreatePropertyButtonState extends State<_CreatePropertyButton> {
 }
 
 class _PropertyCell extends StatefulWidget {
-  final CellIdentifier cellId;
+  final DatabaseCellContext cellContext;
   final GridCellBuilder cellBuilder;
   const _PropertyCell({
-    required this.cellId,
+    required this.cellContext,
     required this.cellBuilder,
     Key? key,
   }) : super(key: key);
@@ -263,8 +280,8 @@ class _PropertyCellState extends State<_PropertyCell> {
 
   @override
   Widget build(BuildContext context) {
-    final style = _customCellStyle(widget.cellId.fieldType);
-    final cell = widget.cellBuilder.build(widget.cellId, style: style);
+    final style = _customCellStyle(widget.cellContext.fieldType);
+    final cell = widget.cellBuilder.build(widget.cellContext, style: style);
 
     final gesture = GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -291,7 +308,7 @@ class _PropertyCellState extends State<_PropertyCell> {
               child: SizedBox(
                 width: 150,
                 child: FieldCellButton(
-                  field: widget.cellId.fieldInfo.field,
+                  field: widget.cellContext.fieldInfo.field,
                   onTap: () => popover.show(),
                   radius: BorderRadius.circular(6),
                 ),
@@ -307,13 +324,16 @@ class _PropertyCellState extends State<_PropertyCell> {
 
   Widget buildFieldEditor() {
     return FieldEditor(
-      viewId: widget.cellId.viewId,
-      fieldName: widget.cellId.fieldInfo.field.name,
-      isGroupField: widget.cellId.fieldInfo.isGroupField,
+      viewId: widget.cellContext.viewId,
+      isGroupingField: widget.cellContext.fieldInfo.isGroupField,
       typeOptionLoader: FieldTypeOptionLoader(
-        viewId: widget.cellId.viewId,
-        field: widget.cellId.fieldInfo.field,
+        viewId: widget.cellContext.viewId,
+        field: widget.cellContext.fieldInfo.field,
       ),
+      onHidden: (fieldId) {
+        popover.close();
+        context.read<RowDetailBloc>().add(RowDetailEvent.hideField(fieldId));
+      },
       onDeleted: (fieldId) {
         popover.close();
 
@@ -335,6 +355,8 @@ GridCellStyle? _customCellStyle(FieldType fieldType) {
     case FieldType.Checkbox:
       return null;
     case FieldType.DateTime:
+    case FieldType.LastEditedTime:
+    case FieldType.CreatedTime:
       return DateCellStyle(
         alignment: Alignment.centerLeft,
       );
@@ -361,8 +383,8 @@ GridCellStyle? _customCellStyle(FieldType fieldType) {
       return GridURLCellStyle(
         placeholder: LocaleKeys.grid_row_textPlaceholder.tr(),
         accessoryTypes: [
-          GridURLCellAccessoryType.edit,
           GridURLCellAccessoryType.copyURL,
+          GridURLCellAccessoryType.visitURL,
         ],
       );
   }
@@ -370,10 +392,10 @@ GridCellStyle? _customCellStyle(FieldType fieldType) {
 }
 
 class _RowOptionColumn extends StatelessWidget {
-  final String rowId;
+  final RowController rowController;
   const _RowOptionColumn({
     required String viewId,
-    required this.rowId,
+    required this.rowController,
     Key? key,
   }) : super(key: key);
 
@@ -388,8 +410,11 @@ class _RowOptionColumn extends StatelessWidget {
           child: FlowyText(LocaleKeys.grid_row_action.tr()),
         ),
         const VSpace(15),
-        _DeleteButton(rowId: rowId),
-        _DuplicateButton(rowId: rowId),
+        _DeleteButton(rowId: rowController.rowId),
+        _DuplicateButton(
+          rowId: rowController.rowId,
+          groupId: rowController.groupId,
+        ),
       ],
     );
   }
@@ -417,7 +442,12 @@ class _DeleteButton extends StatelessWidget {
 
 class _DuplicateButton extends StatelessWidget {
   final String rowId;
-  const _DuplicateButton({required this.rowId, Key? key}) : super(key: key);
+  final String? groupId;
+  const _DuplicateButton({
+    required this.rowId,
+    this.groupId,
+    Key? key,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -427,7 +457,9 @@ class _DuplicateButton extends StatelessWidget {
         text: FlowyText.regular(LocaleKeys.grid_row_duplicate.tr()),
         leftIcon: const FlowySvg(name: "grid/duplicate"),
         onTap: () {
-          context.read<RowDetailBloc>().add(RowDetailEvent.duplicateRow(rowId));
+          context
+              .read<RowDetailBloc>()
+              .add(RowDetailEvent.duplicateRow(rowId, groupId));
           FlowyOverlay.pop(context);
         },
       ),

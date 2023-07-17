@@ -3,42 +3,42 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use collab_database::database::{gen_row_id, timestamp, Database as InnerDatabase};
+use collab_database::database::Database as InnerDatabase;
 use collab_database::fields::{Field, TypeOptionData};
-use collab_database::rows::{Cell, Cells, Row, RowCell, RowId};
-use collab_database::views::{DatabaseLayout, DatabaseView, LayoutSetting, RowOrder};
+use collab_database::rows::{Cell, Cells, CreateRowParams, Row, RowCell, RowId};
+use collab_database::views::{DatabaseLayout, DatabaseView, LayoutSetting};
 use parking_lot::Mutex;
 use tokio::sync::{broadcast, RwLock};
 
-use flowy_error::{FlowyError, FlowyResult};
+use flowy_error::{internal_error, ErrorCode, FlowyError, FlowyResult};
 use flowy_task::TaskDispatcher;
 use lib_infra::future::{to_fut, Fut};
 
 use crate::entities::{
-  AlterFilterParams, AlterSortParams, CalendarEventPB, CellChangesetNotifyPB, CellPB,
-  CreateRowParams, DatabaseFieldChangesetPB, DatabasePB, DatabaseViewSettingPB, DeleteFilterParams,
-  DeleteGroupParams, DeleteSortParams, FieldChangesetParams, FieldIdPB, FieldPB, FieldType,
-  GroupPB, IndexFieldPB, InsertGroupParams, LayoutSettingParams, RepeatedFilterPB, RepeatedGroupPB,
-  RepeatedSortPB, RowPB, SelectOptionCellDataPB, SelectOptionPB,
+  CalendarEventPB, CellChangesetNotifyPB, CellPB, ChecklistCellDataPB, DatabaseFieldChangesetPB,
+  DatabasePB, DatabaseViewSettingPB, DeleteFilterParams, DeleteGroupParams, DeleteSortParams,
+  FieldChangesetParams, FieldIdPB, FieldPB, FieldType, GroupPB, IndexFieldPB, InsertedRowPB,
+  LayoutSettingParams, NoDateCalendarEventPB, RepeatedFilterPB, RepeatedGroupPB, RepeatedSortPB,
+  RowPB, RowsChangePB, SelectOptionCellDataPB, SelectOptionPB, UpdateFilterParams,
+  UpdateSortParams, UpdatedRowPB,
 };
 use crate::notification::{send_notification, DatabaseNotification};
 use crate::services::cell::{
-  apply_cell_data_changeset, get_type_cell_protobuf, AnyTypeCache, CellBuilder, CellCache,
-  ToCellChangeset,
+  apply_cell_changeset, get_cell_protobuf, AnyTypeCache, CellCache, ToCellChangeset,
 };
 use crate::services::database::util::database_view_setting_pb_from_view;
-use crate::services::database::{DatabaseRowEvent, InsertedRow, UpdatedRow};
-use crate::services::database_view::{
-  DatabaseViewChanged, DatabaseViewData, DatabaseViews, RowEventSender,
-};
+use crate::services::database_view::{DatabaseViewChanged, DatabaseViewData, DatabaseViews};
+use crate::services::field::checklist_type_option::{ChecklistCellChangeset, ChecklistCellData};
 use crate::services::field::{
-  default_type_option_data_for_type, default_type_option_data_from_type,
-  select_type_option_from_field, transform_type_option, type_option_data_from_pb_or_default,
-  type_option_to_pb, SelectOptionCellChangeset, SelectOptionIds, TypeOptionCellDataHandler,
-  TypeOptionCellExt,
+  default_type_option_data_from_type, select_type_option_from_field, transform_type_option,
+  type_option_data_from_pb_or_default, type_option_to_pb, DateCellData, SelectOptionCellChangeset,
+  SelectOptionIds, TypeOptionCellDataHandler, TypeOptionCellExt,
 };
 use crate::services::filter::Filter;
-use crate::services::group::{default_group_setting, GroupSetting, RowChangeset};
+use crate::services::group::{
+  default_group_setting, GroupSetting, GroupSettingChangeset, RowChangeset,
+};
+use crate::services::share::csv::{CSVExport, CSVFormat};
 use crate::services::sort::Sort;
 
 #[derive(Clone)]
@@ -46,7 +46,6 @@ pub struct DatabaseEditor {
   database: MutexDatabase,
   pub cell_cache: CellCache,
   database_views: Arc<DatabaseViews>,
-  row_event_tx: RowEventSender,
 }
 
 impl DatabaseEditor {
@@ -55,27 +54,18 @@ impl DatabaseEditor {
     task_scheduler: Arc<RwLock<TaskDispatcher>>,
   ) -> FlowyResult<Self> {
     let cell_cache = AnyTypeCache::<u64>::new();
-    let (row_event_tx, row_event_rx) = broadcast::channel(100);
     let database_view_data = Arc::new(DatabaseViewDataImpl {
       database: database.clone(),
       task_scheduler: task_scheduler.clone(),
       cell_cache: cell_cache.clone(),
     });
 
-    let database_views = Arc::new(
-      DatabaseViews::new(
-        database.clone(),
-        cell_cache.clone(),
-        database_view_data,
-        row_event_rx,
-      )
-      .await?,
-    );
+    let database_views =
+      Arc::new(DatabaseViews::new(database.clone(), cell_cache.clone(), database_view_data).await?);
     Ok(Self {
       database,
       cell_cache,
       database_views,
-      row_event_tx,
     })
   }
 
@@ -85,6 +75,17 @@ impl DatabaseEditor {
   }
 
   pub async fn close(&self) {}
+
+  pub async fn update_view_layout(
+    &self,
+    view_id: &str,
+    layout_type: DatabaseLayout,
+  ) -> FlowyResult<()> {
+    let view_editor = self.database_views.get_view_editor(view_id).await?;
+    view_editor.v_update_layout_type(layout_type).await?;
+
+    Ok(())
+  }
 
   pub async fn subscribe_view_changed(
     &self,
@@ -98,18 +99,18 @@ impl DatabaseEditor {
     self.database.lock().fields.get_field(field_id)
   }
 
-  pub async fn insert_group(&self, params: InsertGroupParams) -> FlowyResult<()> {
+  pub async fn set_group_by_field(&self, view_id: &str, field_id: &str) -> FlowyResult<()> {
     {
       let database = self.database.lock();
-      let field = database.fields.get_field(&params.field_id);
+      let field = database.fields.get_field(field_id);
       if let Some(field) = field {
         let group_setting = default_group_setting(&field);
-        database.insert_group_setting(&params.view_id, group_setting);
+        database.insert_group_setting(view_id, group_setting);
       }
     }
 
-    let view_editor = self.database_views.get_view_editor(&params.view_id).await?;
-    view_editor.v_initialize_new_group(params).await?;
+    let view_editor = self.database_views.get_view_editor(view_id).await?;
+    view_editor.v_initialize_new_group(field_id).await?;
     Ok(())
   }
 
@@ -124,8 +125,28 @@ impl DatabaseEditor {
     Ok(())
   }
 
+  /// Returns the delete view ids.
+  /// If the view is inline view, all the reference views will be deleted. So the return value
+  /// will be the reference view ids and the inline view id. Otherwise, the return value will
+  /// be the view id.
+  pub async fn delete_database_view(&self, view_id: &str) -> FlowyResult<Vec<String>> {
+    Ok(self.database.lock().delete_view(view_id))
+  }
+
+  pub async fn update_group_setting(
+    &self,
+    view_id: &str,
+    group_setting_changeset: GroupSettingChangeset,
+  ) -> FlowyResult<()> {
+    let view_editor = self.database_views.get_view_editor(view_id).await?;
+    view_editor
+      .update_group_setting(group_setting_changeset)
+      .await?;
+    Ok(())
+  }
+
   #[tracing::instrument(level = "trace", skip_all, err)]
-  pub async fn create_or_update_filter(&self, params: AlterFilterParams) -> FlowyResult<()> {
+  pub async fn create_or_update_filter(&self, params: UpdateFilterParams) -> FlowyResult<()> {
     let view_editor = self.database_views.get_view_editor(&params.view_id).await?;
     view_editor.v_insert_filter(params).await?;
     Ok(())
@@ -137,7 +158,7 @@ impl DatabaseEditor {
     Ok(())
   }
 
-  pub async fn create_or_update_sort(&self, params: AlterSortParams) -> FlowyResult<Sort> {
+  pub async fn create_or_update_sort(&self, params: UpdateSortParams) -> FlowyResult<Sort> {
     let view_editor = self.database_views.get_view_editor(&params.view_id).await?;
     let sort = view_editor.v_insert_sort(params).await?;
     Ok(sort)
@@ -178,8 +199,20 @@ impl DatabaseEditor {
     }
   }
 
+  /// Returns a list of fields of the view.
+  /// If `field_ids` is not provided, all the fields will be returned in the order of the field that
+  /// defined in the view. Otherwise, the fields will be returned in the order of the `field_ids`.
   pub fn get_fields(&self, view_id: &str, field_ids: Option<Vec<String>>) -> Vec<Field> {
-    self.database.lock().get_fields(view_id, field_ids)
+    let database = self.database.lock();
+    let field_ids = field_ids.unwrap_or_else(|| {
+      database
+        .fields
+        .get_all_field_orders()
+        .into_iter()
+        .map(|field| field.id)
+        .collect()
+    });
+    database.get_fields(view_id, Some(field_ids))
   }
 
   pub async fn update_field(&self, params: FieldChangesetParams) -> FlowyResult<()> {
@@ -190,7 +223,6 @@ impl DatabaseEditor {
       .update_field(&params.field_id, |update| {
         update
           .set_name_if_not_none(params.name)
-          .set_field_type_if_not_none(params.field_type.map(|field_type| field_type.into()))
           .set_width_at_if_not_none(params.width.map(|value| value as i64))
           .set_visibility_if_not_none(params.visibility);
       });
@@ -201,6 +233,21 @@ impl DatabaseEditor {
   }
 
   pub async fn delete_field(&self, field_id: &str) -> FlowyResult<()> {
+    let is_primary = self
+      .database
+      .lock()
+      .fields
+      .get_field(field_id)
+      .map(|field| field.is_primary)
+      .unwrap_or(false);
+
+    if is_primary {
+      return Err(FlowyError::new(
+        ErrorCode::Internal,
+        "Can not delete primary field",
+      ));
+    }
+
     let database_id = {
       let database = self.database.lock();
       database.delete_field(field_id);
@@ -225,10 +272,15 @@ impl DatabaseEditor {
       .lock()
       .fields
       .update_field(field_id, |update| {
-        update.update_type_options(|type_options_update| {
-          type_options_update.insert(&field_type.to_string(), type_option_data);
-        });
+        if old_field.is_primary {
+          tracing::warn!("Cannot update primary field type");
+        } else {
+          update.update_type_options(|type_options_update| {
+            type_options_update.insert(&field_type.to_string(), type_option_data);
+          });
+        }
       });
+
     self
       .database_views
       .did_update_field_type_option(view_id, field_id, &old_field)
@@ -246,11 +298,18 @@ impl DatabaseEditor {
     match field {
       None => {},
       Some(field) => {
+        if field.is_primary {
+          return Err(FlowyError::new(
+            ErrorCode::Internal,
+            "Can not update primary field's field type",
+          ));
+        }
+
         let old_field_type = FieldType::from(field.field_type);
         let old_type_option = field.get_any_type_option(old_field_type.clone());
         let new_type_option = field
           .get_any_type_option(new_field_type)
-          .unwrap_or_else(|| default_type_option_data_for_type(new_field_type));
+          .unwrap_or_else(|| default_type_option_data_from_type(new_field_type));
 
         let transformed_type_option = transform_type_option(
           &new_type_option,
@@ -275,6 +334,21 @@ impl DatabaseEditor {
   }
 
   pub async fn duplicate_field(&self, view_id: &str, field_id: &str) -> FlowyResult<()> {
+    let is_primary = self
+      .database
+      .lock()
+      .fields
+      .get_field(field_id)
+      .map(|field| field.is_primary)
+      .unwrap_or(false);
+
+    if is_primary {
+      return Err(FlowyError::new(
+        ErrorCode::Internal,
+        "Can not duplicate primary field",
+      ));
+    }
+
     let value = self
       .database
       .lock()
@@ -287,50 +361,57 @@ impl DatabaseEditor {
     Ok(())
   }
 
-  pub async fn duplicate_row(&self, view_id: &str, row_id: &RowId) {
-    let _ = self.database.lock().duplicate_row(view_id, row_id);
-  }
-
-  pub async fn move_row(&self, _view_id: &str, _from: RowId, _to: RowId) {
-    // self.database.lock().views.update_view(view_id, |view| {
-    //   view.move_row_order(from as u32, to as u32);
-    // });
-    // self.row_event_tx.send(DatabaseRowEvent::Move { from: _from, to: _to})
-  }
-
-  pub async fn create_row(&self, params: CreateRowParams) -> FlowyResult<Option<Row>> {
-    let fields = self.database.lock().get_fields(&params.view_id, None);
-    let mut cells =
-      CellBuilder::with_cells(params.cell_data_by_field_id.unwrap_or_default(), fields).build();
-    for view in self.database_views.editors().await {
-      view.v_will_create_row(&mut cells, &params.group_id).await;
-    }
-
-    let result = self.database.lock().create_row_in_view(
-      &params.view_id,
-      collab_database::rows::CreateRowParams {
-        id: gen_row_id(),
-        cells,
-        height: 60,
-        visibility: true,
-        prev_row_id: params.start_row_id,
-        timestamp: timestamp(),
+  // consider returning a result. But most of the time, it should be fine to just ignore the error.
+  pub async fn duplicate_row(&self, view_id: &str, group_id: Option<String>, row_id: &RowId) {
+    let params = self.database.lock().duplicate_row(row_id);
+    match params {
+      None => {
+        tracing::warn!("Failed to duplicate row: {}", row_id);
       },
-    );
+      Some(params) => {
+        let _ = self.create_row(view_id, group_id, params).await;
+      },
+    }
+  }
 
+  pub async fn move_row(&self, view_id: &str, from: RowId, to: RowId) {
+    let database = self.database.lock();
+    if let (Some(row), Some(from_index), Some(to_index)) = (
+      database.get_row(&from),
+      database.index_of_row(view_id, &from),
+      database.index_of_row(view_id, &to),
+    ) {
+      database.views.update_database_view(view_id, |view| {
+        view.move_row_order(from_index as u32, to_index as u32);
+      });
+      drop(database);
+
+      let delete_row_id = from.into_inner();
+      let insert_row = InsertedRowPB::from(&row).with_index(to_index as i32);
+      let changes =
+        RowsChangePB::from_move(view_id.to_string(), vec![delete_row_id], vec![insert_row]);
+      send_notification(view_id, DatabaseNotification::DidUpdateViewRows)
+        .payload(changes)
+        .send();
+    }
+  }
+
+  pub async fn create_row(
+    &self,
+    view_id: &str,
+    group_id: Option<String>,
+    mut params: CreateRowParams,
+  ) -> FlowyResult<Option<Row>> {
+    for view in self.database_views.editors().await {
+      view.v_will_create_row(&mut params.cells, &group_id).await;
+    }
+    let result = self.database.lock().create_row_in_view(view_id, params);
     if let Some((index, row_order)) = result {
-      let _ = self
-        .row_event_tx
-        .send(DatabaseRowEvent::InsertRow(InsertedRow {
-          row: row_order.clone(),
-          index: Some(index as i32),
-          is_new: true,
-        }));
-
+      tracing::trace!("create row: {:?} at {}", row_order, index);
       let row = self.database.lock().get_row(&row_order.id);
       if let Some(row) = row {
         for view in self.database_views.editors().await {
-          view.v_did_create_row(&row, &params.group_id, index).await;
+          view.v_did_create_row(&row, &group_id, index).await;
         }
         return Ok(Some(row));
       }
@@ -358,7 +439,7 @@ impl DatabaseEditor {
   ) -> (Field, Bytes) {
     let name = field_type.default_name();
     let type_option_data = match type_option_data {
-      None => default_type_option_data_for_type(field_type),
+      None => default_type_option_data_from_type(field_type),
       Some(type_option_data) => type_option_data_from_pb_or_default(type_option_data, field_type),
     };
     let (index, field) =
@@ -387,7 +468,7 @@ impl DatabaseEditor {
   ) -> FlowyResult<()> {
     let (database_id, field) = {
       let database = self.database.lock();
-      database.views.update_view(view_id, |view_update| {
+      database.views.update_database_view(view_id, |view_update| {
         view_update.move_field_order(from as u32, to as u32);
       });
       let field = database.fields.get_field(field_id);
@@ -423,41 +504,90 @@ impl DatabaseEditor {
     let row = self.database.lock().remove_row(row_id);
     if let Some(row) = row {
       tracing::trace!("Did delete row:{:?}", row);
-      let _ = self
-        .row_event_tx
-        .send(DatabaseRowEvent::DeleteRow(row.id.clone()));
-
       for view in self.database_views.editors().await {
         view.v_did_delete_row(&row).await;
       }
     }
   }
 
-  pub async fn get_cell(&self, field_id: &str, row_id: RowId) -> CellPB {
-    let (field, cell) = {
-      let database = self.database.lock();
-      let field = database.fields.get_field(field_id);
-      let cell = database.get_cell(field_id, &row_id);
-      (field, cell)
-    };
-
-    match (field, cell) {
-      (Some(field), Some(cell)) => {
-        let field_type = FieldType::from(field.field_type);
-        let cell_bytes = get_type_cell_protobuf(&cell, &field, Some(self.cell_cache.clone()));
-        CellPB {
-          field_id: field_id.to_string(),
-          row_id: row_id.into(),
-          data: cell_bytes.to_vec(),
-          field_type: Some(field_type),
-        }
-      },
-      _ => CellPB::empty(field_id, row_id.into_inner()),
+  pub async fn get_cell(&self, field_id: &str, row_id: &RowId) -> Option<Cell> {
+    let database = self.database.lock();
+    let field = database.fields.get_field(field_id)?;
+    let field_type = FieldType::from(field.field_type);
+    // If the cell data is referenced, return the reference data. Otherwise, return an empty cell.
+    match field_type {
+      FieldType::LastEditedTime | FieldType::CreatedTime => database
+        .get_row(row_id)
+        .map(|row| {
+          if field_type.is_created_time() {
+            DateCellData::new(row.created_at, true)
+          } else {
+            DateCellData::new(row.modified_at, true)
+          }
+        })
+        .map(Cell::from),
+      _ => database.get_cell(field_id, row_id).cell,
     }
   }
 
+  pub async fn get_cell_pb(&self, field_id: &str, row_id: &RowId) -> Option<CellPB> {
+    let (field, cell) = {
+      let database = self.database.lock();
+      let field = database.fields.get_field(field_id)?;
+      let field_type = FieldType::from(field.field_type);
+      // If the cell data is referenced, return the reference data. Otherwise, return an empty cell.
+      let cell = match field_type {
+        FieldType::LastEditedTime | FieldType::CreatedTime => database
+          .get_row(row_id)
+          .map(|row| {
+            if field_type.is_created_time() {
+              DateCellData::new(row.created_at, true)
+            } else {
+              DateCellData::new(row.modified_at, true)
+            }
+          })
+          .map(Cell::from),
+        _ => database.get_cell(field_id, row_id).cell,
+      }?;
+
+      (field, cell)
+    };
+
+    let field_type = FieldType::from(field.field_type);
+    let cell_bytes = get_cell_protobuf(&cell, &field, Some(self.cell_cache.clone()));
+    Some(CellPB {
+      field_id: field_id.to_string(),
+      row_id: row_id.clone().into(),
+      data: cell_bytes.to_vec(),
+      field_type: Some(field_type),
+    })
+  }
+
   pub async fn get_cells_for_field(&self, view_id: &str, field_id: &str) -> Vec<RowCell> {
-    self.database.lock().get_cells_for_field(view_id, field_id)
+    let database = self.database.lock();
+    if let Some(field) = database.fields.get_field(field_id) {
+      let field_type = FieldType::from(field.field_type);
+      match field_type {
+        FieldType::LastEditedTime | FieldType::CreatedTime => database
+          .get_rows_for_view(view_id)
+          .into_iter()
+          .map(|row| {
+            let data = if field_type.is_created_time() {
+              DateCellData::new(row.created_at, true)
+            } else {
+              DateCellData::new(row.modified_at, true)
+            };
+            RowCell {
+              row_id: row.id,
+              cell: Some(Cell::from(data)),
+            }
+          })
+          .collect(),
+        _ => database.get_cells_for_field(view_id, field_id),
+      }
+    } else {
+      vec![]
+    }
   }
 
   pub async fn update_cell_with_changeset<T>(
@@ -479,17 +609,15 @@ impl DatabaseEditor {
           Err(FlowyError::internal().context(msg))
         },
       }?;
-      (
-        field,
-        database.get_cell(field_id, &row_id).map(|cell| cell.cell),
-      )
+      (field, database.get_cell(field_id, &row_id).cell)
     };
-    let cell_changeset = cell_changeset.to_cell_changeset_str();
     let new_cell =
-      apply_cell_data_changeset(cell_changeset, cell, &field, Some(self.cell_cache.clone()))?;
+      apply_cell_changeset(cell_changeset, cell, &field, Some(self.cell_cache.clone()))?;
     self.update_cell(view_id, row_id, field_id, new_cell).await
   }
 
+  /// Update a cell in the database.
+  /// This will notify all views that the cell has been updated.
   pub async fn update_cell(
     &self,
     view_id: &str,
@@ -497,7 +625,13 @@ impl DatabaseEditor {
     field_id: &str,
     new_cell: Cell,
   ) -> FlowyResult<()> {
+    // Get the old row before updating the cell. It would be better to get the old cell
     let old_row = { self.database.lock().get_row(&row_id) };
+
+    // Get all auto updated fields. It will be used to notify the frontend
+    // that the fields have been updated.
+    let auto_updated_fields = self.get_auto_updated_fields(view_id);
+
     self.database.lock().update_row(&row_id, |row_update| {
       row_update.update_cells(|cell_update| {
         cell_update.insert(field_id, new_cell);
@@ -506,26 +640,40 @@ impl DatabaseEditor {
 
     let option_row = self.database.lock().get_row(&row_id);
     if let Some(new_row) = option_row {
-      let _ = self
-        .row_event_tx
-        .send(DatabaseRowEvent::UpdateRow(UpdatedRow {
-          row: RowOrder::from(&new_row),
-          field_ids: vec![field_id.to_string()],
-        }));
+      let updated_row = UpdatedRowPB {
+        row: RowPB::from(&new_row),
+        field_ids: vec![field_id.to_string()],
+      };
+      let changes = RowsChangePB::from_update(view_id.to_string(), updated_row);
+      send_notification(view_id, DatabaseNotification::DidUpdateViewRows)
+        .payload(changes)
+        .send();
+
       for view in self.database_views.editors().await {
-        view.v_did_update_row(&old_row, &new_row).await;
+        view.v_did_update_row(&old_row, &new_row, field_id).await;
       }
     }
 
-    notify_did_update_cell(vec![CellChangesetNotifyPB {
-      view_id: view_id.to_string(),
-      row_id: row_id.into_inner(),
-      field_id: field_id.to_string(),
-    }])
-    .await;
+    // Collect all the updated field's id. Notify the frontend that all of them have been updated.
+    let mut auto_updated_field_ids = auto_updated_fields
+      .into_iter()
+      .map(|field| field.id)
+      .collect::<Vec<String>>();
+    auto_updated_field_ids.push(field_id.to_string());
+    let changeset = auto_updated_field_ids
+      .into_iter()
+      .map(|field_id| CellChangesetNotifyPB {
+        view_id: view_id.to_string(),
+        row_id: row_id.clone().into_inner(),
+        field_id,
+      })
+      .collect();
+    notify_did_update_cell(changeset).await;
+
     Ok(())
   }
 
+  /// Just create an option for the field's type option. The option is save to the database.
   pub async fn create_select_option(
     &self,
     field_id: &str,
@@ -537,6 +685,8 @@ impl DatabaseEditor {
     Some(SelectOptionPB::from(select_option))
   }
 
+  /// Insert the options into the field's type option and update the cell content with the new options.
+  /// Only used for single select and multiple select.
   pub async fn insert_select_options(
     &self,
     view_id: &str,
@@ -544,30 +694,30 @@ impl DatabaseEditor {
     row_id: RowId,
     options: Vec<SelectOptionPB>,
   ) -> FlowyResult<()> {
-    let field = match self.database.lock().fields.get_field(field_id) {
-      Some(field) => Ok(field),
-      None => {
-        let msg = format!("Field with id:{} not found", &field_id);
-        Err(FlowyError::internal().context(msg))
-      },
-    }?;
+    let field = self
+      .database
+      .lock()
+      .fields
+      .get_field(field_id)
+      .ok_or_else(|| {
+        FlowyError::record_not_found().context(format!("Field with id:{} not found", &field_id))
+      })?;
+    debug_assert!(FieldType::from(field.field_type).is_select_option());
+
     let mut type_option = select_type_option_from_field(&field)?;
     let cell_changeset = SelectOptionCellChangeset {
       insert_option_ids: options.iter().map(|option| option.id.clone()).collect(),
       ..Default::default()
     };
+    options
+      .into_iter()
+      .for_each(|option| type_option.insert_option(option.into()));
 
-    for option in options {
-      type_option.insert_option(option.into());
-    }
+    // Update the field's type option
     self
-      .database
-      .lock()
-      .fields
-      .update_field(field_id, |update| {
-        update.set_type_option(field.field_type, Some(type_option.to_type_option_data()));
-      });
-
+      .update_field_type_option(view_id, field_id, type_option.to_type_option_data(), field)
+      .await?;
+    // Insert the options into the cell
     self
       .update_cell_with_changeset(view_id, row_id, field_id, cell_changeset)
       .await?;
@@ -616,10 +766,10 @@ impl DatabaseEditor {
     match field {
       None => SelectOptionCellDataPB::default(),
       Some(field) => {
-        let row_cell = self.database.lock().get_cell(field_id, &row_id);
-        let ids = match row_cell {
+        let cell = self.database.lock().get_cell(field_id, &row_id).cell;
+        let ids = match cell {
           None => SelectOptionIds::new(),
-          Some(row_cell) => SelectOptionIds::from(&row_cell.cell),
+          Some(cell) => SelectOptionIds::from(&cell),
         };
         match select_type_option_from_field(&field) {
           Ok(type_option) => type_option.get_selected_options(ids).into(),
@@ -629,10 +779,42 @@ impl DatabaseEditor {
     }
   }
 
+  pub async fn get_checklist_option(&self, row_id: RowId, field_id: &str) -> ChecklistCellDataPB {
+    let row_cell = self.database.lock().get_cell(field_id, &row_id);
+    let cell_data = match row_cell.cell {
+      None => ChecklistCellData::default(),
+      Some(cell) => ChecklistCellData::from(&cell),
+    };
+    ChecklistCellDataPB::from(cell_data)
+  }
+
+  pub async fn set_checklist_options(
+    &self,
+    view_id: &str,
+    row_id: RowId,
+    field_id: &str,
+    changeset: ChecklistCellChangeset,
+  ) -> FlowyResult<()> {
+    let field = self
+      .database
+      .lock()
+      .fields
+      .get_field(field_id)
+      .ok_or_else(|| {
+        FlowyError::record_not_found().context(format!("Field with id:{} not found", &field_id))
+      })?;
+    debug_assert!(FieldType::from(field.field_type).is_checklist());
+
+    self
+      .update_cell_with_changeset(view_id, row_id, field_id, changeset)
+      .await?;
+    Ok(())
+  }
+
   #[tracing::instrument(level = "trace", skip_all, err)]
   pub async fn load_groups(&self, view_id: &str) -> FlowyResult<RepeatedGroupPB> {
     let view = self.database_views.get_view_editor(view_id).await?;
-    let groups = view.v_load_groups().await?;
+    let groups = view.v_load_groups().await.unwrap_or_default();
     Ok(RepeatedGroupPB { items: groups })
   }
 
@@ -697,18 +879,13 @@ impl DatabaseEditor {
 
   pub async fn group_by_field(&self, view_id: &str, field_id: &str) -> FlowyResult<()> {
     let view = self.database_views.get_view_editor(view_id).await?;
-    view.v_update_group_setting(field_id).await?;
+    view.v_update_grouping_field(field_id).await?;
     Ok(())
   }
 
-  pub async fn set_layout_setting(
-    &self,
-    view_id: &str,
-    layout_ty: DatabaseLayout,
-    layout_setting: LayoutSettingParams,
-  ) {
+  pub async fn set_layout_setting(&self, view_id: &str, layout_setting: LayoutSettingParams) {
     if let Ok(view) = self.database_views.get_view_editor(view_id).await {
-      let _ = view.v_set_layout_settings(&layout_ty, layout_setting).await;
+      let _ = view.v_set_layout_settings(layout_setting).await;
     }
   }
 
@@ -731,6 +908,15 @@ impl DatabaseEditor {
         vec![]
       },
     }
+  }
+
+  #[tracing::instrument(level = "trace", skip_all)]
+  pub async fn get_all_no_date_calendar_events(
+    &self,
+    view_id: &str,
+  ) -> FlowyResult<Vec<NoDateCalendarEventPB>> {
+    let _database_view = self.database_views.get_view_editor(view_id).await?;
+    todo!()
   }
 
   #[tracing::instrument(level = "trace", skip_all)]
@@ -796,8 +982,13 @@ impl DatabaseEditor {
     Ok(database_view_setting_pb_from_view(view))
   }
 
-  pub async fn get_database_data(&self, view_id: &str) -> DatabasePB {
-    let rows = self.get_rows(view_id).await.unwrap_or_default();
+  pub async fn get_database_data(&self, view_id: &str) -> FlowyResult<DatabasePB> {
+    let database_view = self.database_views.get_view_editor(view_id).await?;
+    let view = database_view
+      .get_view()
+      .await
+      .ok_or_else(FlowyError::record_not_found)?;
+    let rows = database_view.v_get_rows().await;
     let (database_id, fields) = {
       let database = self.database.lock();
       let database_id = database.get_database_id();
@@ -814,11 +1005,34 @@ impl DatabaseEditor {
       .into_iter()
       .map(|row| RowPB::from(row.as_ref()))
       .collect::<Vec<RowPB>>();
-    DatabasePB {
+    Ok(DatabasePB {
       id: database_id,
       fields,
       rows,
-    }
+      layout_type: view.layout.into(),
+    })
+  }
+
+  pub async fn export_csv(&self, style: CSVFormat) -> FlowyResult<String> {
+    let database = self.database.clone();
+    let csv = tokio::task::spawn_blocking(move || {
+      let database_guard = database.lock();
+      let csv = CSVExport.export_database(&database_guard, style)?;
+      Ok::<String, FlowyError>(csv)
+    })
+    .await
+    .map_err(internal_error)??;
+    Ok(csv)
+  }
+
+  fn get_auto_updated_fields(&self, view_id: &str) -> Vec<Field> {
+    self
+      .database
+      .lock()
+      .get_fields(view_id, None)
+      .into_iter()
+      .filter(|f| FieldType::from(f.field_type).is_auto_update())
+      .collect::<Vec<Field>>()
   }
 }
 
@@ -872,7 +1086,7 @@ struct DatabaseViewDataImpl {
 }
 
 impl DatabaseViewData for DatabaseViewDataImpl {
-  fn get_view_setting(&self, view_id: &str) -> Fut<Option<DatabaseView>> {
+  fn get_view(&self, view_id: &str) -> Fut<Option<DatabaseView>> {
     let view = self.database.lock().get_view(view_id);
     to_fut(async move { view })
   }
@@ -889,6 +1103,26 @@ impl DatabaseViewData for DatabaseViewDataImpl {
       .fields
       .get_field(field_id)
       .map(Arc::new);
+    to_fut(async move { field })
+  }
+
+  fn create_field(
+    &self,
+    view_id: &str,
+    name: &str,
+    field_type: FieldType,
+    type_option_data: TypeOptionData,
+  ) -> Fut<Field> {
+    let (_, field) = self.database.lock().create_default_field(
+      view_id,
+      name.to_string(),
+      field_type.clone().into(),
+      |field| {
+        field
+          .type_options
+          .insert(field_type.to_string(), type_option_data);
+      },
+    );
     to_fut(async move { field })
   }
 
@@ -928,18 +1162,13 @@ impl DatabaseViewData for DatabaseViewDataImpl {
     to_fut(async move { cells.into_iter().map(Arc::new).collect() })
   }
 
-  fn get_cell_in_row(&self, field_id: &str, row_id: &RowId) -> Fut<Option<Arc<RowCell>>> {
+  fn get_cell_in_row(&self, field_id: &str, row_id: &RowId) -> Fut<Arc<RowCell>> {
     let cell = self.database.lock().get_cell(field_id, row_id);
-    to_fut(async move { cell.map(Arc::new) })
+    to_fut(async move { Arc::new(cell) })
   }
 
   fn get_layout_for_view(&self, view_id: &str) -> DatabaseLayout {
-    self
-      .database
-      .lock()
-      .views
-      .get_view_layout(view_id)
-      .unwrap_or_default()
+    self.database.lock().views.get_database_view_layout(view_id)
   }
 
   fn get_group_setting(&self, view_id: &str) -> Vec<GroupSetting> {
@@ -1003,11 +1232,7 @@ impl DatabaseViewData for DatabaseViewDataImpl {
   }
 
   fn get_layout_setting(&self, view_id: &str, layout_ty: &DatabaseLayout) -> Option<LayoutSetting> {
-    self
-      .database
-      .lock()
-      .views
-      .get_layout_setting(view_id, layout_ty)
+    self.database.lock().get_layout_setting(view_id, layout_ty)
   }
 
   fn insert_layout_setting(
@@ -1020,6 +1245,17 @@ impl DatabaseViewData for DatabaseViewDataImpl {
       .database
       .lock()
       .insert_layout_setting(view_id, layout_ty, layout_setting);
+  }
+
+  fn get_layout_type(&self, view_id: &str) -> DatabaseLayout {
+    self.database.lock().views.get_database_view_layout(view_id)
+  }
+
+  fn update_layout_type(&self, view_id: &str, layout_type: &DatabaseLayout) {
+    self
+      .database
+      .lock()
+      .update_layout_type(view_id, layout_type);
   }
 
   fn get_task_scheduler(&self) -> Arc<RwLock<TaskDispatcher>> {
